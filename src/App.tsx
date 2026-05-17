@@ -1,760 +1,642 @@
-import { useState, useMemo, useEffect, useCallback } from 'react';
-import { Search, X, Tag, BookOpen, ChevronDown, ChevronUp } from 'lucide-react';
-import type { Verse, Word } from './types';
-import { VERSES, ROOT_GLOSS } from './data/verses';
-import { norm } from './data/helpers';
+import { useState, useEffect, useMemo, useRef } from "react";
+import { Search, Tag, X, BookOpen, Hash, FileText, Plus, Filter, Bookmark, Type } from "lucide-react";
+import type { Verse, Word } from "./types";
+import { VERSES, ROOT_GLOSS } from "./data/verses";
+import { norm } from "./data/helpers";
 
-// ─── Storage helpers ──────────────────────────────────────────────────────────
-
-type StorageData = {
-  tags: Record<string, string[]>;
-  notes: Record<string, string>;
-};
-
-const STORAGE_KEY = 'mishkah_v1';
-
-function loadStorage(): StorageData {
-  try {
-    const raw = (window as any).storage?.getItem?.(STORAGE_KEY)
-      ?? localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw) as StorageData;
-  } catch {
-    // ignore
-  }
-  return { tags: {}, notes: {} };
-}
-
-function saveStorage(data: StorageData): boolean {
-  try {
-    const json = JSON.stringify(data);
-    if ((window as any).storage?.setItem) {
-      (window as any).storage.setItem(STORAGE_KEY, json);
-    } else {
-      localStorage.setItem(STORAGE_KEY, json);
-    }
-    return true;
-  } catch {
-    return false;
+declare global {
+  interface Window {
+    storage?: {
+      get: (key: string) => Promise<{ value: string } | null>;
+      set: (key: string, value: string) => Promise<void>;
+    };
   }
 }
 
-// ─── Derived data helpers ─────────────────────────────────────────────────────
+function App() {
+  const [userTags, setUserTags] = useState<Record<string, string[]>>({});
+  const [userNotes, setUserNotes] = useState<Record<string, string>>({});
+  const [storageReady, setStorageReady] = useState(false);
+  const [storageError, setStorageError] = useState<string | null>(null);
 
-function getAllRoots(): string[] {
-  const rootSet = new Set<string>();
-  for (const verse of VERSES) {
-    for (const word of verse.words) {
-      if (word.root) rootSet.add(word.root);
-    }
-  }
-  return Array.from(rootSet).sort();
-}
+  const [query, setQuery] = useState("");
+  const [activeTags, setActiveTags] = useState<string[]>([]);
+  const [activeRoot, setActiveRoot] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedWord, setSelectedWord] = useState<{ verseId: string; idx: number } | null>(null);
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
+  useEffect(() => {
+    (async () => {
+      try {
+        let tags: Record<string, string[]> = {};
+        let notes: Record<string, string> = {};
+        try {
+          const t = await window.storage?.get("quran:tags");
+          if (t?.value) tags = JSON.parse(t.value);
+        } catch (_) {}
+        try {
+          const n = await window.storage?.get("quran:notes");
+          if (n?.value) notes = JSON.parse(n.value);
+        } catch (_) {}
+        setUserTags(tags);
+        setUserNotes(notes);
+      } catch {
+        setStorageError("التخزين غير متاح؛ ستبقى الوسوم والملاحظات فقط طوال هذه الجلسة.");
+      } finally {
+        setStorageReady(true);
+      }
+    })();
+  }, []);
 
-interface WordChipProps {
-  word: Word;
-  isSelected: boolean;
-  onClick: () => void;
-}
+  useEffect(() => {
+    if (!storageReady) return;
+    window.storage?.set("quran:tags", JSON.stringify(userTags)).catch(() => {});
+  }, [userTags, storageReady]);
 
-function WordChip({ word, isSelected, onClick }: WordChipProps) {
-  return (
-    <button
-      onClick={onClick}
-      className={`
-        inline-block px-1 py-0.5 rounded cursor-pointer transition-colors text-2xl leading-relaxed font-arabic
-        ${isSelected
-          ? 'bg-amber-200 text-amber-900 ring-2 ring-amber-400'
-          : 'hover:bg-amber-50 text-gray-900'}
-      `}
-      title={word.tr}
-      dir="rtl"
-    >
-      {word.ar}
-    </button>
+  useEffect(() => {
+    if (!storageReady) return;
+    window.storage?.set("quran:notes", JSON.stringify(userNotes)).catch(() => {});
+  }, [userNotes, storageReady]);
+
+  const allTags = useMemo(() => {
+    const counts: Record<string, number> = {};
+    Object.values(userTags).forEach((arr) =>
+      arr.forEach((t) => { counts[t] = (counts[t] || 0) + 1; })
+    );
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  }, [userTags]);
+
+  const allRoots = useMemo(() => {
+    const counts: Record<string, number> = {};
+    VERSES.forEach((v) =>
+      v.words.forEach((w) => { if (w.root) counts[w.root] = (counts[w.root] || 0) + 1; })
+    );
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  }, []);
+
+  const filtered = useMemo(() => {
+    const q = query.trim();
+    const qNorm = norm(q);
+    const qLower = q.toLowerCase();
+    const refMatch = q.match(/^(\d+):(\d+)$/);
+
+    return VERSES.filter((v) => {
+      if (refMatch) return v.surah === +refMatch[1] && v.ayah === +refMatch[2];
+      if (activeRoot && !v.words.some((w) => w.root === activeRoot)) return false;
+      if (activeTags.length) {
+        const tags = userTags[v.id] || [];
+        if (!activeTags.every((t) => tags.includes(t))) return false;
+      }
+      if (q) {
+        const hitArabic = norm(v.arabic).includes(qNorm) || v.words.some((w) => norm(w.ar).includes(qNorm));
+        const hitRoot = v.words.some((w) => w.root && (w.root.includes(q) || norm(w.root).includes(qNorm)));
+        const hitTransliteration = v.words.some((w) => w.tr.toLowerCase().includes(qLower));
+        const hitName = v.surahName.includes(q);
+        if (!(hitArabic || hitRoot || hitTransliteration || hitName)) return false;
+      }
+      return true;
+    });
+  }, [query, activeRoot, activeTags, userTags]);
+
+  const selectedVerse = useMemo(
+    () => VERSES.find((v) => v.id === selectedId) ?? null,
+    [selectedId]
   );
-}
 
-interface VerseCardProps {
-  verse: Verse;
-  isSelected: boolean;
-  tags: string[];
-  activeRootFilter: string | null;
-  onSelect: () => void;
-  onRootClick: (root: string) => void;
-  selectedWord: Word | null;
-  onWordClick: (word: Word) => void;
-}
+  const addTag = (verseId: string, tag: string) => {
+    const t = tag.trim();
+    if (!t) return;
+    setUserTags((prev) => {
+      const cur = prev[verseId] || [];
+      if (cur.includes(t)) return prev;
+      return { ...prev, [verseId]: [...cur, t] };
+    });
+  };
 
-function VerseCard({
-  verse,
-  isSelected,
-  tags,
-  activeRootFilter,
-  onSelect,
-  onRootClick,
-  selectedWord,
-  onWordClick,
-}: VerseCardProps) {
-  // Highlight words that match the active root filter
-  const highlightRoot = activeRootFilter;
+  const removeTag = (verseId: string, tag: string) => {
+    setUserTags((prev) => {
+      const cur = (prev[verseId] || []).filter((x) => x !== tag);
+      const next = { ...prev };
+      if (cur.length) next[verseId] = cur; else delete next[verseId];
+      return next;
+    });
+  };
+
+  const setNote = (verseId: string, note: string) => {
+    setUserNotes((prev) => {
+      const next = { ...prev };
+      if (note.trim()) next[verseId] = note; else delete next[verseId];
+      return next;
+    });
+  };
+
+  const toggleActiveTag = (t: string) =>
+    setActiveTags((cur) => cur.includes(t) ? cur.filter((x) => x !== t) : [...cur, t]);
+
+  const handleRootClick = (root: string) => {
+    setActiveRoot(root);
+    setSelectedWord(null);
+  };
+
+  const clearFilters = () => {
+    setQuery("");
+    setActiveTags([]);
+    setActiveRoot(null);
+  };
 
   return (
     <div
-      className={`
-        rounded-xl border p-4 cursor-pointer transition-all
-        ${isSelected
-          ? 'border-amber-400 bg-amber-50 shadow-md'
-          : 'border-gray-200 bg-white hover:border-amber-300 hover:shadow-sm'}
-      `}
-      onClick={onSelect}
+      className="min-h-screen w-full"
+      style={{
+        background: "#f5efe2",
+        backgroundImage:
+          "radial-gradient(1200px 600px at 0% 0%, rgba(45,93,79,0.06), transparent 60%), radial-gradient(900px 500px at 100% 100%, rgba(140,80,30,0.05), transparent 60%)",
+        color: "#1a1612",
+        fontFamily: "'DM Sans', system-ui, sans-serif",
+      }}
     >
-      {/* Header */}
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-xs font-mono text-gray-400">
-          {verse.surah}:{verse.ayah}
-        </span>
-        <span className="text-sm text-gray-600 font-arabic">{verse.surahName}</span>
-      </div>
+      <FontStyles />
 
-      {/* Arabic text as clickable words */}
-      <div
-        className="flex flex-wrap gap-1 mb-2 justify-end"
-        dir="rtl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {verse.words.map((word, i) => (
-          <span key={i}>
-            {highlightRoot && word.root === highlightRoot ? (
-              <WordChip
-                word={word}
-                isSelected={selectedWord?.ar === word.ar && selectedWord?.tr === word.tr}
-                onClick={() => onWordClick(word)}
-              />
-            ) : (
-              <WordChip
-                word={word}
-                isSelected={selectedWord?.ar === word.ar && selectedWord?.tr === word.tr}
-                onClick={() => onWordClick(word)}
-              />
-            )}
-          </span>
-        ))}
-      </div>
+      <header className="border-b" style={{ borderColor: "#d9cfb6", background: "rgba(253,250,240,0.7)", backdropFilter: "blur(10px)" }}>
+        <div className="max-w-[1400px] mx-auto px-6 py-5 flex items-center gap-6">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-sm flex items-center justify-center" style={{ background: "#2d5d4f", color: "#f5efe2" }}>
+              <BookOpen size={20} strokeWidth={1.5} />
+            </div>
+            <div>
+              <h1 style={{ fontFamily: "'Cormorant Garamond', serif", fontWeight: 600, fontSize: 24, lineHeight: 1, letterSpacing: "-0.01em" }}>
+                مِشكَاة
+              </h1>
+              <p className="text-xs mt-0.5" style={{ color: "#6b6052", letterSpacing: "0.05em" }}>
+                مِنصَّةُ البَحثِ القُرآنِي
+              </p>
+            </div>
+          </div>
 
-      {/* Root chips */}
-      <div className="flex flex-wrap gap-1 justify-end mt-2" onClick={(e) => e.stopPropagation()}>
-        {Array.from(new Set(verse.words.map((w) => w.root).filter(Boolean) as string[])).map(
-          (root) => (
-            <button
-              key={root}
-              onClick={() => onRootClick(root)}
-              className={`
-                text-xs px-2 py-0.5 rounded-full border transition-colors font-mono
-                ${activeRootFilter === root
-                  ? 'bg-teal-600 text-white border-teal-600'
-                  : 'bg-teal-50 text-teal-700 border-teal-200 hover:bg-teal-100'}
-              `}
+          <div className="flex-1 max-w-2xl mx-auto relative">
+            <Search size={16} className="absolute right-3 top-1/2 -translate-y-1/2" style={{ color: "#8a7d68" }} />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="ابحث بالعربية، أو بالجذر (مثال: ك ت ب)، أو بالمرجع (2:255)…"
               dir="rtl"
-            >
-              {root}
-            </button>
-          )
-        )}
-      </div>
+              className="w-full pr-10 pl-4 py-2.5 rounded-sm outline-none text-sm"
+              style={{ background: "#fdfaf0", border: "1px solid #d9cfb6", fontFamily: "'Amiri', serif", fontSize: 16 }}
+            />
+          </div>
 
-      {/* Tags */}
-      {tags.length > 0 && (
-        <div className="flex flex-wrap gap-1 mt-2 justify-end">
-          {tags.map((tag) => (
-            <span
-              key={tag}
-              className="text-xs bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full"
-              dir="rtl"
-            >
-              {tag}
-            </span>
-          ))}
+          <div className="text-xs" style={{ color: "#6b6052" }}>
+            <span style={{ fontWeight: 600, color: "#1a1612" }}>{filtered.length}</span>
+            <span className="mx-1">/</span>
+            <span>{VERSES.length} آية</span>
+          </div>
         </div>
-      )}
+        {storageError && (
+          <div className="max-w-[1400px] mx-auto px-6 pb-3 text-xs" style={{ color: "#8a4a1a" }} dir="rtl">
+            {storageError}
+          </div>
+        )}
+      </header>
+
+      <div className="max-w-[1400px] mx-auto px-6 py-6 grid gap-6" style={{ gridTemplateColumns: "260px 1fr 360px" }}>
+        {/* Sidebar: filters */}
+        <aside className="space-y-6">
+          <Section title="التصفية" icon={<Filter size={14} />}>
+            {(activeTags.length > 0 || activeRoot || query) ? (
+              <button onClick={clearFilters} className="text-xs underline-offset-2 hover:underline" style={{ color: "#2d5d4f" }} dir="rtl">
+                مسح جميع التصفيات
+              </button>
+            ) : (
+              <p className="text-xs italic" style={{ color: "#8a7d68" }} dir="rtl">لا توجد تصفية نشطة.</p>
+            )}
+            {activeRoot && (
+              <div className="mt-2 flex items-center gap-2 text-xs" dir="rtl">
+                <span style={{ color: "#6b6052" }}>الجذر:</span>
+                <Chip onRemove={() => setActiveRoot(null)} variant="root">
+                  <span dir="rtl" style={{ fontFamily: "'Amiri', serif", fontSize: 14 }}>{activeRoot}</span>
+                </Chip>
+              </div>
+            )}
+          </Section>
+
+          <Section title="وسوماتك" icon={<Tag size={14} />} count={allTags.length}>
+            {allTags.length === 0 ? (
+              <p className="text-xs italic" style={{ color: "#8a7d68" }} dir="rtl">سمِّ آية لبناء تصنيفك.</p>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {allTags.map(([t, c]) => (
+                  <button
+                    key={t}
+                    onClick={() => toggleActiveTag(t)}
+                    className="px-2 py-1 rounded-sm text-xs transition-colors"
+                    style={{
+                      background: activeTags.includes(t) ? "#2d5d4f" : "#ece2c8",
+                      color: activeTags.includes(t) ? "#f5efe2" : "#3d362c",
+                      border: "1px solid " + (activeTags.includes(t) ? "#2d5d4f" : "#d9cfb6"),
+                    }}
+                  >
+                    {t} <span style={{ opacity: 0.7 }}>· {c}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </Section>
+
+          <Section title="الجذور في المتن" icon={<Hash size={14} />} count={allRoots.length}>
+            <div className="space-y-1 max-h-[280px] overflow-y-auto pr-1 custom-scroll">
+              {allRoots.map(([r, c]) => (
+                <button
+                  key={r}
+                  onClick={() => handleRootClick(r)}
+                  className="w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-sm transition-colors"
+                  style={{
+                    background: activeRoot === r ? "#2d5d4f" : "transparent",
+                    color: activeRoot === r ? "#f5efe2" : "#3d362c",
+                  }}
+                  onMouseEnter={(e) => { if (activeRoot !== r) e.currentTarget.style.background = "#ece2c8"; }}
+                  onMouseLeave={(e) => { if (activeRoot !== r) e.currentTarget.style.background = "transparent"; }}
+                >
+                  <span className="flex items-center gap-2 text-xs" style={{ opacity: 0.8 }}>
+                    <span>{c}</span>
+                    <span className="italic" style={{ fontSize: 11 }}>{ROOT_GLOSS[r]?.split("،")[0]}</span>
+                  </span>
+                  <span dir="rtl" style={{ fontFamily: "'Amiri', serif", fontSize: 18, fontWeight: 600 }}>{r}</span>
+                </button>
+              ))}
+            </div>
+          </Section>
+        </aside>
+
+        {/* Center: verse list */}
+        <main className="space-y-4 min-w-0">
+          {filtered.length === 0 ? (
+            <div className="rounded-sm p-10 text-center" style={{ background: "#fdfaf0", border: "1px dashed #d9cfb6" }}>
+              <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 22, color: "#5c5247" }}>
+                لا توجد نتائج مطابقة.
+              </p>
+              <p className="text-xs mt-2" style={{ color: "#8a7d68" }} dir="rtl">
+                جرِّب مسح التصفيات أو ابحث بجذر معروف مثل{" "}
+                <span style={{ fontFamily: "'Amiri', serif" }}>ر ح م</span>
+              </p>
+            </div>
+          ) : (
+            filtered.map((v) => (
+              <VerseCard
+                key={v.id}
+                verse={v}
+                tags={userTags[v.id] || []}
+                hasNote={!!userNotes[v.id]}
+                isSelected={selectedId === v.id}
+                onSelect={() => setSelectedId(v.id)}
+                onWordClick={(idx) => { setSelectedId(v.id); setSelectedWord({ verseId: v.id, idx }); }}
+                selectedWordIdx={selectedWord?.verseId === v.id ? selectedWord.idx : null}
+                activeRoot={activeRoot}
+                onRootClick={handleRootClick}
+              />
+            ))
+          )}
+        </main>
+
+        {/* Right: detail panel */}
+        <aside className="space-y-4">
+          <DetailPanel
+            verse={selectedVerse}
+            wordSel={selectedWord}
+            tags={selectedVerse ? (userTags[selectedVerse.id] || []) : []}
+            note={selectedVerse ? (userNotes[selectedVerse.id] || "") : ""}
+            allTagSuggestions={allTags.map(([t]) => t)}
+            onAddTag={addTag}
+            onRemoveTag={removeTag}
+            onSetNote={setNote}
+            onRootClick={handleRootClick}
+          />
+        </aside>
+      </div>
+
+      <footer className="max-w-[1400px] mx-auto px-6 py-8 text-xs" style={{ color: "#8a7d68" }} dir="rtl">
+        يعرض متناً تجريبياً — الفاتحة، ومختارات من البقرة، وسورة الإخلاص. للتوسع، اربط واجهة برمجة Quran.com أو مدوّنة القرآن العربي.
+      </footer>
     </div>
   );
 }
 
-interface DetailPanelProps {
-  verse: Verse | null;
+function FontStyles() {
+  return (
+    <style>{`
+      @import url('https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400&family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&display=swap');
+      .custom-scroll::-webkit-scrollbar { width: 6px; }
+      .custom-scroll::-webkit-scrollbar-track { background: transparent; }
+      .custom-scroll::-webkit-scrollbar-thumb { background: #d9cfb6; border-radius: 3px; }
+      .arabic-word { transition: background-color 0.15s ease, color 0.15s ease; }
+      .arabic-word:hover { background-color: #ece2c8; }
+      .arabic-word.is-root-match { background-color: rgba(45,93,79,0.12); }
+      .arabic-word.is-selected { background-color: #2d5d4f; color: #f5efe2; }
+    `}</style>
+  );
+}
+
+function Section({ title, icon, count, children }: {
+  title: string;
+  icon: React.ReactNode;
+  count?: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-2.5 pb-2" style={{ borderBottom: "1px solid #d9cfb6" }}>
+        <span style={{ color: "#6b6052" }}>{icon}</span>
+        <h2 className="text-xs uppercase tracking-wider" style={{ color: "#3d362c", fontWeight: 600, letterSpacing: "0.1em" }} dir="rtl">
+          {title}
+        </h2>
+        {typeof count === "number" && (
+          <span className="ml-auto text-xs" style={{ color: "#8a7d68" }}>{count}</span>
+        )}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function Chip({ children, onRemove, variant }: {
+  children: React.ReactNode;
+  onRemove?: () => void;
+  variant?: "root";
+}) {
+  const styles = variant === "root"
+    ? { background: "rgba(45,93,79,0.12)", color: "#2d5d4f", border: "1px solid rgba(45,93,79,0.3)" }
+    : { background: "#ece2c8", color: "#3d362c", border: "1px solid #d9cfb6" };
+  return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-sm text-xs" style={styles}>
+      {children}
+      {onRemove && (
+        <button onClick={onRemove} className="ml-0.5 hover:opacity-70" aria-label="حذف">
+          <X size={11} />
+        </button>
+      )}
+    </span>
+  );
+}
+
+function VerseCard({
+  verse, tags, hasNote, isSelected, onSelect, onWordClick, selectedWordIdx, activeRoot, onRootClick,
+}: {
+  verse: Verse;
   tags: string[];
-  note: string;
-  selectedWord: Word | null;
-  onTagAdd: (tag: string) => void;
-  onTagRemove: (tag: string) => void;
-  onNoteChange: (note: string) => void;
-  onWordClick: (word: Word) => void;
+  hasNote: boolean;
+  isSelected: boolean;
+  onSelect: () => void;
+  onWordClick: (idx: number) => void;
+  selectedWordIdx: number | null;
+  activeRoot: string | null;
+  onRootClick: (root: string) => void;
+}) {
+  return (
+    <article
+      onClick={onSelect}
+      className="rounded-sm cursor-pointer transition-all"
+      style={{
+        background: isSelected ? "#fdfaf0" : "#fbf6e8",
+        border: "1px solid " + (isSelected ? "#2d5d4f" : "#d9cfb6"),
+        boxShadow: isSelected ? "0 1px 0 #2d5d4f, 0 4px 12px rgba(45,93,79,0.08)" : "none",
+      }}
+    >
+      <div className="px-5 pt-4 pb-2 flex items-center gap-3" style={{ borderBottom: "1px solid #ece2c8" }}>
+        <div className="px-2 py-0.5 rounded-sm text-xs font-mono" style={{ background: "#2d5d4f", color: "#f5efe2", letterSpacing: "0.05em" }}>
+          {verse.surah}:{verse.ayah}
+        </div>
+        <div dir="rtl" style={{ fontFamily: "'Amiri', serif", fontSize: 18, color: "#3d362c" }}>
+          {verse.surahName}
+        </div>
+        <div className="ml-auto flex items-center gap-2">
+          {tags.map((t) => <Chip key={t}>{t}</Chip>)}
+          {hasNote && (
+            <span title="توجد ملاحظة" style={{ color: "#2d5d4f" }}>
+              <FileText size={14} />
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div className="px-5 py-6" dir="rtl" style={{ fontFamily: "'Amiri', serif", fontSize: 32, lineHeight: 2, color: "#1a1612", textAlign: "right" }}>
+        {verse.words.map((w, i) => {
+          const isRootMatch = activeRoot && w.root === activeRoot;
+          const isSel = isSelected && selectedWordIdx === i;
+          const cls = "arabic-word" + (isRootMatch ? " is-root-match" : "") + (isSel ? " is-selected" : "");
+          return (
+            <span
+              key={i}
+              className={cls}
+              onClick={(e) => { e.stopPropagation(); onWordClick(i); }}
+              style={{ display: "inline-block", padding: "2px 6px", marginInline: 2, borderRadius: 2, cursor: "pointer" }}
+            >
+              {w.ar}
+            </span>
+          );
+        })}
+      </div>
+
+      <div className="px-5 pb-4 flex flex-wrap gap-1.5" dir="rtl">
+        {Array.from(new Set(verse.words.map((w) => w.root).filter((r): r is string => r !== null))).map((r) => (
+          <button
+            key={r}
+            onClick={(e) => { e.stopPropagation(); onRootClick(r); }}
+            className="px-2 py-0.5 rounded-sm text-xs transition-colors"
+            style={{
+              background: activeRoot === r ? "rgba(45,93,79,0.18)" : "transparent",
+              border: "1px solid " + (activeRoot === r ? "#2d5d4f" : "#d9cfb6"),
+              color: "#3d362c",
+              cursor: "pointer",
+            }}
+          >
+            <span dir="rtl" style={{ fontFamily: "'Amiri', serif", fontSize: 14, fontWeight: 600 }}>{r}</span>
+          </button>
+        ))}
+      </div>
+    </article>
+  );
 }
 
 function DetailPanel({
-  verse,
-  tags,
-  note,
-  selectedWord,
-  onTagAdd,
-  onTagRemove,
-  onNoteChange,
-  onWordClick,
-}: DetailPanelProps) {
-  const [tagInput, setTagInput] = useState('');
+  verse, wordSel, tags, note, allTagSuggestions, onAddTag, onRemoveTag, onSetNote, onRootClick,
+}: {
+  verse: Verse | null;
+  wordSel: { verseId: string; idx: number } | null;
+  tags: string[];
+  note: string;
+  allTagSuggestions: string[];
+  onAddTag: (verseId: string, tag: string) => void;
+  onRemoveTag: (verseId: string, tag: string) => void;
+  onSetNote: (verseId: string, note: string) => void;
+  onRootClick: (root: string) => void;
+}) {
+  const [tagInput, setTagInput] = useState("");
+  const [showSuggest, setShowSuggest] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  const handleTagSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const trimmed = tagInput.trim();
-    if (trimmed && !tags.includes(trimmed)) {
-      onTagAdd(trimmed);
-      setTagInput('');
-    }
-  };
+  useEffect(() => { setTagInput(""); }, [verse?.id]);
 
   if (!verse) {
     return (
-      <div className="flex flex-col items-center justify-center h-full text-center p-8 text-gray-400">
-        <BookOpen className="w-12 h-12 mb-4 opacity-40" />
-        <p className="text-lg font-medium mb-2 font-arabic">اختر آية للتفصيل.</p>
-        <p className="text-sm font-arabic">انقر على أي آية لعرض تفاصيل كلماتها، وإضافة وسوم، أو تدوين ملاحظة.</p>
+      <div className="rounded-sm p-6" style={{ background: "#fdfaf0", border: "1px dashed #d9cfb6" }}>
+        <Bookmark size={20} style={{ color: "#8a7d68" }} />
+        <p className="mt-3" style={{ fontFamily: "'Amiri', serif", fontSize: 20, color: "#3d362c" }} dir="rtl">
+          اختر آية للتفصيل.
+        </p>
+        <p className="text-xs mt-1" style={{ color: "#8a7d68" }} dir="rtl">
+          انقر على أي آية لعرض تفاصيل كلماتها، وإضافة وسوم، أو تدوين ملاحظة.
+        </p>
       </div>
     );
   }
 
+  const word: Word | null = wordSel?.verseId === verse.id ? verse.words[wordSel.idx] : null;
+  const matchingSuggestions = tagInput.trim()
+    ? allTagSuggestions.filter((t) => t.toLowerCase().includes(tagInput.toLowerCase()) && !tags.includes(t)).slice(0, 5)
+    : allTagSuggestions.filter((t) => !tags.includes(t)).slice(0, 5);
+
+  const submitTag = (val?: string) => {
+    onAddTag(verse.id, val ?? tagInput);
+    setTagInput("");
+    setShowSuggest(false);
+  };
+
   return (
-    <div className="flex flex-col gap-4 p-4 overflow-y-auto h-full" dir="rtl">
-      {/* Verse header */}
-      <div className="border-b pb-3">
-        <div className="flex items-center justify-between mb-1">
-          <span className="text-xs font-mono text-gray-400">{verse.surah}:{verse.ayah}</span>
-          <span className="text-sm font-semibold text-gray-700 font-arabic">
-            سورة {verse.surahName}
-          </span>
+    <div className="rounded-sm overflow-hidden" style={{ background: "#fdfaf0", border: "1px solid #d9cfb6" }}>
+      <div className="px-5 py-4" style={{ borderBottom: "1px solid #ece2c8", background: "#fbf6e8" }}>
+        <div className="text-xs font-mono" style={{ color: "#2d5d4f", letterSpacing: "0.05em" }}>
+          {verse.surah}:{verse.ayah}
         </div>
-        <p className="text-2xl leading-loose text-right font-arabic text-gray-900">
-          {verse.arabic}
-        </p>
+        <div dir="rtl" style={{ fontFamily: "'Amiri', serif", fontSize: 22, color: "#1a1612", marginTop: 2 }}>
+          سورة {verse.surahName}
+        </div>
       </div>
 
       {/* Word inspector */}
-      <div>
-        <h3 className="text-xs uppercase tracking-wide text-gray-500 mb-2 font-arabic">مُفتِّش الكلمات</h3>
-        {selectedWord ? (
-          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
-            <p className="text-3xl text-right mb-1 font-arabic">{selectedWord.ar}</p>
-            <p className="text-sm text-gray-500 italic mb-2 text-right">{selectedWord.tr}</p>
-            <div className="flex flex-col gap-1 text-sm">
-              <div className="flex justify-between">
-                <span className="text-gray-500 font-arabic">اللمّة</span>
-                <span className="font-arabic">{selectedWord.lemma}</span>
-              </div>
-              {selectedWord.root && (
-                <div className="flex justify-between">
-                  <span className="text-gray-500 font-arabic">الجذر</span>
-                  <span className="font-mono text-teal-700">{selectedWord.root}</span>
-                </div>
-              )}
-              {selectedWord.root && ROOT_GLOSS[selectedWord.root] && (
-                <div className="flex justify-between">
-                  <span className="text-gray-500 font-arabic">المعنى</span>
-                  <span className="text-gray-700 font-arabic text-right">{ROOT_GLOSS[selectedWord.root]}</span>
-                </div>
-              )}
+      <div className="px-5 py-4" style={{ borderBottom: "1px solid #ece2c8" }}>
+        <div className="flex items-center gap-2 mb-3">
+          <Type size={13} style={{ color: "#6b6052" }} />
+          <h3 className="text-xs uppercase tracking-wider" style={{ color: "#3d362c", fontWeight: 600, letterSpacing: "0.1em" }} dir="rtl">
+            {word ? "الكلمة" : "مُفتِّش الكلمات"}
+          </h3>
+        </div>
+        {word ? (
+          <div>
+            <div dir="rtl" style={{ fontFamily: "'Amiri', serif", fontSize: 42, lineHeight: 1.4, color: "#1a1612" }}>
+              {word.ar}
             </div>
+            <div className="text-sm italic mt-1" style={{ color: "#5c5247" }}>{word.tr}</div>
+            <div className="mt-3 grid grid-cols-2 gap-3 text-xs">
+              <div>
+                <div className="uppercase tracking-wider mb-1" style={{ color: "#8a7d68", letterSpacing: "0.1em" }} dir="rtl">اللمّة</div>
+                <div dir="rtl" style={{ fontFamily: "'Amiri', serif", fontSize: 18, color: "#1a1612" }}>{word.lemma || "—"}</div>
+              </div>
+              <div>
+                <div className="uppercase tracking-wider mb-1" style={{ color: "#8a7d68", letterSpacing: "0.1em" }} dir="rtl">الجذر</div>
+                {word.root ? (
+                  <button
+                    onClick={() => onRootClick(word.root!)}
+                    className="px-2 py-1 rounded-sm transition-colors"
+                    style={{ background: "rgba(45,93,79,0.1)", border: "1px solid rgba(45,93,79,0.3)" }}
+                  >
+                    <span dir="rtl" style={{ fontFamily: "'Amiri', serif", fontSize: 18, color: "#2d5d4f", fontWeight: 600 }}>{word.root}</span>
+                  </button>
+                ) : <span style={{ color: "#8a7d68" }}>—</span>}
+              </div>
+            </div>
+            {word.root && ROOT_GLOSS[word.root] && (
+              <div className="mt-3 text-xs italic px-3 py-2 rounded-sm" style={{ color: "#5c5247", background: "#fbf6e8" }} dir="rtl">
+                {ROOT_GLOSS[word.root]}
+              </div>
+            )}
           </div>
         ) : (
-          <p className="text-sm text-gray-400 text-center py-2 font-arabic">
+          <p className="text-xs italic" style={{ color: "#8a7d68" }} dir="rtl">
             انقر على أي كلمة عربية لعرض جذرها ولمّها.
           </p>
         )}
       </div>
 
-      {/* Words clickable list */}
-      <div>
-        <div className="flex flex-wrap gap-1 justify-end">
-          {verse.words.map((word, i) => (
-            <WordChip
-              key={i}
-              word={word}
-              isSelected={
-                selectedWord?.ar === word.ar && selectedWord?.tr === word.tr && selectedWord?.lemma === word.lemma
-              }
-              onClick={() => onWordClick(word)}
-            />
+      {/* Tags */}
+      <div className="px-5 py-4" style={{ borderBottom: "1px solid #ece2c8" }}>
+        <div className="flex items-center gap-2 mb-3">
+          <Tag size={13} style={{ color: "#6b6052" }} />
+          <h3 className="text-xs uppercase tracking-wider" style={{ color: "#3d362c", fontWeight: 600, letterSpacing: "0.1em" }} dir="rtl">
+            الوسوم
+          </h3>
+        </div>
+        <div className="flex flex-wrap gap-1.5 mb-3">
+          {tags.length === 0 && <span className="text-xs italic" style={{ color: "#8a7d68" }} dir="rtl">لا وسوم بعد.</span>}
+          {tags.map((t) => (
+            <Chip key={t} onRemove={() => onRemoveTag(verse.id, t)}>{t}</Chip>
           ))}
+        </div>
+        <div className="relative">
+          <div className="flex items-stretch gap-2">
+            <input
+              ref={inputRef}
+              value={tagInput}
+              onChange={(e) => { setTagInput(e.target.value); setShowSuggest(true); }}
+              onFocus={() => setShowSuggest(true)}
+              onBlur={() => setTimeout(() => setShowSuggest(false), 150)}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); submitTag(); } }}
+              placeholder="مثال: رحمة، أسماء الله، دعاء…"
+              dir="rtl"
+              className="flex-1 px-3 py-2 rounded-sm text-sm outline-none"
+              style={{ background: "#fbf6e8", border: "1px solid #d9cfb6", fontFamily: "'Amiri', serif" }}
+            />
+            <button
+              onClick={() => submitTag()}
+              className="px-3 rounded-sm flex items-center"
+              style={{ background: "#2d5d4f", color: "#f5efe2" }}
+            >
+              <Plus size={14} />
+            </button>
+          </div>
+          {showSuggest && matchingSuggestions.length > 0 && (
+            <div className="absolute left-0 right-0 mt-1 rounded-sm z-10" style={{ background: "#fdfaf0", border: "1px solid #d9cfb6" }}>
+              {matchingSuggestions.map((t) => (
+                <button
+                  key={t}
+                  onMouseDown={(e) => { e.preventDefault(); submitTag(t); }}
+                  className="w-full text-right px-3 py-1.5 text-xs hover:bg-[#ece2c8]"
+                  style={{ color: "#3d362c" }}
+                  dir="rtl"
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Tags */}
-      <div>
-        <h3 className="text-xs uppercase tracking-wide text-gray-500 mb-2 font-arabic">الوسوم</h3>
-        {tags.length === 0 ? (
-          <p className="text-sm text-gray-400 font-arabic">لا وسوم بعد.</p>
-        ) : (
-          <div className="flex flex-wrap gap-1 mb-2">
-            {tags.map((tag) => (
-              <span
-                key={tag}
-                className="flex items-center gap-1 text-sm bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full"
-              >
-                <span className="font-arabic">{tag}</span>
-                <button
-                  onClick={() => onTagRemove(tag)}
-                  className="hover:text-violet-900 ml-1"
-                  aria-label="حذف الوسم"
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
-        <form onSubmit={handleTagSubmit} className="flex gap-2">
-          <button
-            type="submit"
-            className="text-xs bg-violet-600 text-white px-2 py-1 rounded hover:bg-violet-700"
-          >
-            <Tag className="w-3 h-3" />
-          </button>
-          <input
-            type="text"
-            value={tagInput}
-            onChange={(e) => setTagInput(e.target.value)}
-            placeholder="مثال: رحمة، أسماء الله، دعاء…"
-            className="flex-1 text-sm border border-gray-200 rounded px-2 py-1 text-right font-arabic"
-            dir="rtl"
-          />
-        </form>
-      </div>
-
-      {/* Note */}
-      <div>
-        <h3 className="text-xs uppercase tracking-wide text-gray-500 mb-2 font-arabic">ملاحظة</h3>
+      {/* Notes */}
+      <div className="px-5 py-4">
+        <div className="flex items-center gap-2 mb-3">
+          <FileText size={13} style={{ color: "#6b6052" }} />
+          <h3 className="text-xs uppercase tracking-wider" style={{ color: "#3d362c", fontWeight: 600, letterSpacing: "0.1em" }} dir="rtl">
+            ملاحظة
+          </h3>
+        </div>
         <textarea
           value={note}
-          onChange={(e) => onNoteChange(e.target.value)}
+          onChange={(e) => onSetNote(verse.id, e.target.value)}
           placeholder="مرجع تفسيري، إحالة مقارنة، تعليقك الخاص…"
-          className="w-full text-sm border border-gray-200 rounded px-2 py-2 min-h-[100px] text-right resize-y font-arabic"
+          rows={5}
           dir="rtl"
+          className="w-full px-3 py-2 rounded-sm text-sm outline-none resize-none"
+          style={{
+            background: "#fbf6e8",
+            border: "1px solid #d9cfb6",
+            fontFamily: "'Amiri', serif",
+            fontSize: 16,
+            lineHeight: 1.7,
+            color: "#1a1612",
+          }}
         />
       </div>
     </div>
   );
 }
 
-// ─── Main App ─────────────────────────────────────────────────────────────────
-
-export default function App() {
-  const [search, setSearch] = useState('');
-  const [activeRootFilter, setActiveRootFilter] = useState<string | null>(null);
-  const [activeSurahFilter, setActiveSurahFilter] = useState<number | null>(null);
-  const [selectedVerseId, setSelectedVerseId] = useState<string | null>(null);
-  const [selectedWord, setSelectedWord] = useState<Word | null>(null);
-  const [storageData, setStorageData] = useState<StorageData>(() => loadStorage());
-  const [storageError, setStorageError] = useState(false);
-  const [showRoots, setShowRoots] = useState(false);
-  const [showTags, setShowTags] = useState(false);
-
-  // Persist storage
-  useEffect(() => {
-    const ok = saveStorage(storageData);
-    if (!ok) setStorageError(true);
-  }, [storageData]);
-
-  // All unique roots
-  const allRoots = useMemo(() => getAllRoots(), []);
-
-  // All unique tags from user data
-  const allUserTags = useMemo(() => {
-    const tagSet = new Set<string>();
-    for (const tags of Object.values(storageData.tags)) {
-      for (const tag of tags) tagSet.add(tag);
-    }
-    return Array.from(tagSet).sort();
-  }, [storageData.tags]);
-
-  // Filter verses
-  const filteredVerses = useMemo(() => {
-    let results = VERSES;
-
-    // Surah filter
-    if (activeSurahFilter !== null) {
-      results = results.filter((v) => v.surah === activeSurahFilter);
-    }
-
-    // Root filter
-    if (activeRootFilter) {
-      results = results.filter((v) =>
-        v.words.some((w) => w.root === activeRootFilter)
-      );
-    }
-
-    // Search
-    const q = search.trim();
-    if (q) {
-      // Check if it's a reference like 2:255
-      const refMatch = /^(\d+):(\d+)$/.exec(q);
-      if (refMatch) {
-        const s = parseInt(refMatch[1]);
-        const a = parseInt(refMatch[2]);
-        results = results.filter((v) => v.surah === s && v.ayah === a);
-      } else {
-        // Check if it looks like a root (space-separated letters)
-        const rootPattern = /^[؀-ۿ\s]+$/.test(q) && q.includes(' ');
-        if (rootPattern) {
-          results = results.filter((v) =>
-            v.words.some((w) => w.root === q)
-          );
-        } else {
-          // Arabic text search
-          const normQ = norm(q);
-          results = results.filter((v) => {
-            const normArabic = norm(v.arabic);
-            if (normArabic.includes(normQ)) return true;
-            if (v.words.some((w) => norm(w.ar).includes(normQ))) return true;
-            if (v.words.some((w) => w.tr.toLowerCase().includes(q.toLowerCase()))) return true;
-            return false;
-          });
-        }
-      }
-    }
-
-    return results;
-  }, [search, activeRootFilter, activeSurahFilter]);
-
-  const selectedVerse = useMemo(
-    () => VERSES.find((v) => v.id === selectedVerseId) ?? null,
-    [selectedVerseId]
-  );
-
-  const handleRootClick = useCallback(
-    (root: string) => {
-      setActiveRootFilter((prev) => (prev === root ? null : root));
-    },
-    []
-  );
-
-  const handleVerseSelect = useCallback((verseId: string) => {
-    setSelectedVerseId((prev) => (prev === verseId ? null : verseId));
-    setSelectedWord(null);
-  }, []);
-
-  const handleTagAdd = useCallback((tag: string) => {
-    if (!selectedVerseId) return;
-    setStorageData((prev) => ({
-      ...prev,
-      tags: {
-        ...prev.tags,
-        [selectedVerseId]: [...(prev.tags[selectedVerseId] ?? []), tag],
-      },
-    }));
-  }, [selectedVerseId]);
-
-  const handleTagRemove = useCallback((tag: string) => {
-    if (!selectedVerseId) return;
-    setStorageData((prev) => ({
-      ...prev,
-      tags: {
-        ...prev.tags,
-        [selectedVerseId]: (prev.tags[selectedVerseId] ?? []).filter((t) => t !== tag),
-      },
-    }));
-  }, [selectedVerseId]);
-
-  const handleNoteChange = useCallback((note: string) => {
-    if (!selectedVerseId) return;
-    setStorageData((prev) => ({
-      ...prev,
-      notes: { ...prev.notes, [selectedVerseId]: note },
-    }));
-  }, [selectedVerseId]);
-
-  const clearAllFilters = () => {
-    setActiveRootFilter(null);
-    setActiveSurahFilter(null);
-    setSearch('');
-  };
-
-  const hasFilters = activeRootFilter !== null || activeSurahFilter !== null || search.trim() !== '';
-
-  // Unique surahs in corpus
-  const surahs = useMemo(() => {
-    const seen = new Map<number, string>();
-    for (const v of VERSES) {
-      if (!seen.has(v.surah)) seen.set(v.surah, v.surahName);
-    }
-    return Array.from(seen.entries()).map(([num, name]) => ({ num, name }));
-  }, []);
-
-  // Verses per root (for roots panel)
-  const rootVerseCount = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const root of allRoots) {
-      counts[root] = VERSES.filter((v) => v.words.some((w) => w.root === root)).length;
-    }
-    return counts;
-  }, [allRoots]);
-
-  return (
-    <div className="min-h-screen bg-gray-50 flex flex-col" dir="rtl">
-      {/* Storage warning */}
-      {storageError && (
-        <div className="bg-yellow-50 border-b border-yellow-200 px-4 py-2 text-sm text-yellow-800 text-center font-arabic">
-          التخزين غير متاح؛ ستبقى الوسوم والملاحظات فقط طوال هذه الجلسة.
-        </div>
-      )}
-
-      {/* Header */}
-      <header className="bg-white border-b border-gray-200 px-6 py-4">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-amber-500 rounded-lg flex items-center justify-center">
-              <span className="text-white font-bold text-sm font-arabic">م</span>
-            </div>
-            <div>
-              <h1 className="text-xl font-bold text-gray-900 font-arabic">مِشكَاة</h1>
-              <p className="text-xs text-gray-500 font-arabic">مِنصَّةُ البَحثِ القُرآنِي</p>
-            </div>
-          </div>
-          {/* Surah filter pills */}
-          <div className="flex gap-2">
-            {surahs.map(({ num, name }) => (
-              <button
-                key={num}
-                onClick={() =>
-                  setActiveSurahFilter((prev) => (prev === num ? null : num))
-                }
-                className={`text-sm px-3 py-1 rounded-full border transition-colors font-arabic ${
-                  activeSurahFilter === num
-                    ? 'bg-amber-500 text-white border-amber-500'
-                    : 'border-gray-300 text-gray-600 hover:bg-amber-50'
-                }`}
-              >
-                {name}
-              </button>
-            ))}
-          </div>
-        </div>
-      </header>
-
-      {/* Search bar */}
-      <div className="bg-white border-b border-gray-100 px-6 py-3">
-        <div className="max-w-7xl mx-auto">
-          <div className="relative">
-            <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="ابحث بالعربية، أو بالجذر (مثال: ك ت ب)، أو بالمرجع (2:255)…"
-              className="w-full pr-10 pl-4 py-2 border border-gray-200 rounded-lg text-right font-arabic focus:outline-none focus:ring-2 focus:ring-amber-300"
-              dir="rtl"
-            />
-            {search && (
-              <button
-                onClick={() => setSearch('')}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Main layout */}
-      <div className="flex-1 max-w-7xl mx-auto w-full px-6 py-4 flex gap-4">
-        {/* Left sidebar */}
-        <aside className="w-64 shrink-0 flex flex-col gap-4">
-          {/* Filters */}
-          <div className="bg-white rounded-xl border border-gray-200 p-4">
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-3 font-arabic">
-              التصفية
-            </h2>
-            {!hasFilters ? (
-              <p className="text-sm text-gray-400 font-arabic">لا توجد تصفية نشطة.</p>
-            ) : (
-              <div className="flex flex-col gap-2">
-                {activeRootFilter && (
-                  <div className="flex items-center justify-between bg-teal-50 rounded px-2 py-1">
-                    <button
-                      onClick={() => setActiveRootFilter(null)}
-                      className="text-teal-600 hover:text-teal-800"
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                    <span className="text-sm text-teal-700 font-mono">
-                      <span className="text-gray-500 text-xs font-arabic ml-1">الجذر:</span>
-                      {activeRootFilter}
-                    </span>
-                  </div>
-                )}
-                {activeSurahFilter !== null && (
-                  <div className="flex items-center justify-between bg-amber-50 rounded px-2 py-1">
-                    <button
-                      onClick={() => setActiveSurahFilter(null)}
-                      className="text-amber-600 hover:text-amber-800"
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                    <span className="text-sm text-amber-700 font-arabic">
-                      {surahs.find((s) => s.num === activeSurahFilter)?.name}
-                    </span>
-                  </div>
-                )}
-                {search.trim() && (
-                  <div className="flex items-center justify-between bg-gray-50 rounded px-2 py-1">
-                    <button
-                      onClick={() => setSearch('')}
-                      className="text-gray-600 hover:text-gray-800"
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                    <span className="text-sm text-gray-700 font-arabic">{search}</span>
-                  </div>
-                )}
-                <button
-                  onClick={clearAllFilters}
-                  className="text-xs text-red-500 hover:text-red-700 text-right mt-1 font-arabic"
-                >
-                  مسح جميع التصفيات
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* User Tags */}
-          <div className="bg-white rounded-xl border border-gray-200 p-4">
-            <button
-              className="w-full flex items-center justify-between"
-              onClick={() => setShowTags((p) => !p)}
-            >
-              <span>{showTags ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}</span>
-              <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-500 font-arabic">
-                وسوماتك
-              </h2>
-            </button>
-            {showTags && (
-              <div className="mt-3">
-                {allUserTags.length === 0 ? (
-                  <p className="text-sm text-gray-400 font-arabic">سمِّ آية لبناء تصنيفك.</p>
-                ) : (
-                  <div className="flex flex-wrap gap-1">
-                    {allUserTags.map((tag) => (
-                      <span
-                        key={tag}
-                        className="text-xs bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full font-arabic"
-                      >
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Roots in corpus */}
-          <div className="bg-white rounded-xl border border-gray-200 p-4">
-            <button
-              className="w-full flex items-center justify-between"
-              onClick={() => setShowRoots((p) => !p)}
-            >
-              <span>{showRoots ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}</span>
-              <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-500 font-arabic">
-                الجذور في المتن
-              </h2>
-            </button>
-            {showRoots && (
-              <div className="mt-3 flex flex-wrap gap-1 max-h-48 overflow-y-auto">
-                {allRoots.map((root) => (
-                  <button
-                    key={root}
-                    onClick={() => handleRootClick(root)}
-                    title={ROOT_GLOSS[root] ?? ''}
-                    className={`
-                      text-xs px-2 py-0.5 rounded-full border font-mono transition-colors
-                      ${activeRootFilter === root
-                        ? 'bg-teal-600 text-white border-teal-600'
-                        : 'bg-teal-50 text-teal-700 border-teal-200 hover:bg-teal-100'}
-                    `}
-                  >
-                    {root}
-                    <span className="text-teal-400 mr-1 font-sans">·{rootVerseCount[root]}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </aside>
-
-        {/* Verse list */}
-        <main className="flex-1 min-w-0">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-sm text-gray-500 font-arabic">
-              {filteredVerses.length} آية
-            </span>
-          </div>
-
-          {filteredVerses.length === 0 ? (
-            <div className="bg-white rounded-xl border border-gray-200 p-8 text-center text-gray-400">
-              <p className="text-lg mb-2 font-arabic">لا توجد نتائج مطابقة.</p>
-              <p className="text-sm font-arabic">
-                جرِّب مسح التصفيات أو ابحث بجذر معروف مثل{' '}
-                <button
-                  className="text-teal-600 hover:underline font-mono"
-                  onClick={() => setSearch('ر ح م')}
-                >
-                  ر ح م
-                </button>
-              </p>
-            </div>
-          ) : (
-            <div className="flex flex-col gap-3">
-              {filteredVerses.map((verse) => (
-                <VerseCard
-                  key={verse.id}
-                  verse={verse}
-                  isSelected={selectedVerseId === verse.id}
-                  tags={storageData.tags[verse.id] ?? []}
-                  activeRootFilter={activeRootFilter}
-                  onSelect={() => handleVerseSelect(verse.id)}
-                  onRootClick={handleRootClick}
-                  selectedWord={selectedVerseId === verse.id ? selectedWord : null}
-                  onWordClick={(word) => {
-                    setSelectedVerseId(verse.id);
-                    setSelectedWord(word);
-                  }}
-                />
-              ))}
-            </div>
-          )}
-        </main>
-
-        {/* Detail panel */}
-        <aside className="w-80 shrink-0">
-          <div className="sticky top-4 bg-white rounded-xl border border-gray-200 min-h-[400px] max-h-[calc(100vh-8rem)] overflow-hidden flex flex-col">
-            <DetailPanel
-              verse={selectedVerse}
-              tags={selectedVerseId ? (storageData.tags[selectedVerseId] ?? []) : []}
-              note={selectedVerseId ? (storageData.notes[selectedVerseId] ?? '') : ''}
-              selectedWord={selectedWord}
-              onTagAdd={handleTagAdd}
-              onTagRemove={handleTagRemove}
-              onNoteChange={handleNoteChange}
-              onWordClick={setSelectedWord}
-            />
-          </div>
-        </aside>
-      </div>
-
-      {/* Footer */}
-      <footer className="border-t border-gray-200 bg-white px-6 py-3 text-center text-xs text-gray-400 font-arabic">
-        يعرض متناً تجريبياً — الفاتحة، ومختارات من البقرة، وسورة الإخلاص. للتوسع، اربط واجهة برمجة Quran.com أو مدوّنة القرآن العربي.
-      </footer>
-    </div>
-  );
-}
+export default App;
