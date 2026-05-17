@@ -7,3 +7,41 @@
     font-family: 'Amiri', 'Scheherazade New', 'Traditional Arabic', serif;
   }
 }
+
+:root {
+  --bg: #f5efe2;
+  --bg-elev: #fdfaf0;
+  --bg-elev2: #fbf6e8;
+  --bg-muted: #ece2c8;
+  --border: #d9cfb6;
+  --text: #1a1612;
+  --text-2: #3d362c;
+  --text-3: #5c5247;
+  --text-4: #6b6052;
+  --text-5: #8a7d68;
+  --accent: #2d5d4f;
+  --accent-rgb: 45 93 79;
+  --warn: #8a4a1a;
+  --header-bg: rgba(253, 250, 240, 0.7);
+  --accent2-rgb: 140 80 30;
+  --scrollbar-thumb: #d9cfb6;
+}
+
+:root[data-theme="dark"] {
+  --bg: #15110d;
+  --bg-elev: #1f1a14;
+  --bg-elev2: #1a1610;
+  --bg-muted: #2b251c;
+  --border: #3a3127;
+  --text: #f0e8d4;
+  --text-2: #d8cdb2;
+  --text-3: #b5a98e;
+  --text-4: #a89a7e;
+  --text-5: #8a7d68;
+  --accent: #6fbfa6;
+  --accent-rgb: 111 191 166;
+  --warn: #e0a060;
+  --header-bg: rgba(31, 26, 20, 0.75);
+  --accent2-rgb: 200 140 80;
+  --scrollbar-thumb: #3a3127;
+}
