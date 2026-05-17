@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import { Search, Tag, X, BookOpen, Hash, FileText, Plus, Filter, Bookmark, Type } from "lucide-react";
-import type { Verse, Word } from "./types";
-import { VERSES, ROOT_GLOSS } from "./data/verses";
+import { Search, Tag, X, BookOpen, Hash, FileText, Plus, Filter, Bookmark, Type, Loader2 } from "lucide-react";
+import type { Verse, Word, SurahMeta, SurahData } from "./types";
+import { ROOT_GLOSS } from "./data/verses";
 import { norm } from "./data/helpers";
 
 declare global {
@@ -14,6 +14,11 @@ declare global {
 }
 
 function App() {
+  const [surahIndex, setSurahIndex] = useState<SurahMeta[]>([]);
+  const [selectedSurahId, setSelectedSurahId] = useState<number>(1);
+  const [surahData, setSurahData] = useState<SurahData | null>(null);
+  const [surahLoading, setSurahLoading] = useState(false);
+
   const [userTags, setUserTags] = useState<Record<string, string[]>>({});
   const [userNotes, setUserNotes] = useState<Record<string, string>>({});
   const [storageReady, setStorageReady] = useState(false);
@@ -25,136 +30,87 @@ function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedWord, setSelectedWord] = useState<{ verseId: string; idx: number } | null>(null);
 
+  // Load surah index
+  useEffect(() => {
+    fetch("/data/index.json").then(r => r.json()).then(setSurahIndex).catch(() => {});
+  }, []);
+
+  // Load surah data when selection changes
+  useEffect(() => {
+    setSurahLoading(true);
+    setSurahData(null);
+    setSelectedId(null);
+    setSelectedWord(null);
+    setQuery("");
+    setActiveRoot(null);
+    fetch(`/data/surah-${selectedSurahId}.json`)
+      .then(r => r.json())
+      .then((d: SurahData) => { setSurahData(d); setSurahLoading(false); })
+      .catch(() => setSurahLoading(false));
+  }, [selectedSurahId]);
+
+  // Hydrate persisted state
   useEffect(() => {
     (async () => {
       try {
         let tags: Record<string, string[]> = {};
         let notes: Record<string, string> = {};
-        try {
-          const t = await window.storage?.get("quran:tags");
-          if (t?.value) tags = JSON.parse(t.value);
-        } catch (_) {}
-        try {
-          const n = await window.storage?.get("quran:notes");
-          if (n?.value) notes = JSON.parse(n.value);
-        } catch (_) {}
+        try { const t = await window.storage?.get("quran:tags"); if (t?.value) tags = JSON.parse(t.value); } catch (_) {}
+        try { const n = await window.storage?.get("quran:notes"); if (n?.value) notes = JSON.parse(n.value); } catch (_) {}
         setUserTags(tags);
         setUserNotes(notes);
-      } catch {
-        setStorageError("التخزين غير متاح؛ ستبقى الوسوم والملاحظات فقط طوال هذه الجلسة.");
-      } finally {
-        setStorageReady(true);
-      }
+      } catch { setStorageError("التخزين غير متاح؛ ستبقى الوسوم والملاحظات فقط طوال هذه الجلسة."); }
+      finally { setStorageReady(true); }
     })();
   }, []);
 
-  useEffect(() => {
-    if (!storageReady) return;
-    window.storage?.set("quran:tags", JSON.stringify(userTags)).catch(() => {});
-  }, [userTags, storageReady]);
+  useEffect(() => { if (!storageReady) return; window.storage?.set("quran:tags", JSON.stringify(userTags)).catch(() => {}); }, [userTags, storageReady]);
+  useEffect(() => { if (!storageReady) return; window.storage?.set("quran:notes", JSON.stringify(userNotes)).catch(() => {}); }, [userNotes, storageReady]);
 
-  useEffect(() => {
-    if (!storageReady) return;
-    window.storage?.set("quran:notes", JSON.stringify(userNotes)).catch(() => {});
-  }, [userNotes, storageReady]);
+  const verses = surahData?.verses ?? [];
 
   const allTags = useMemo(() => {
     const counts: Record<string, number> = {};
-    Object.values(userTags).forEach((arr) =>
-      arr.forEach((t) => { counts[t] = (counts[t] || 0) + 1; })
-    );
+    Object.values(userTags).forEach(arr => arr.forEach(t => { counts[t] = (counts[t] || 0) + 1; }));
     return Object.entries(counts).sort((a, b) => b[1] - a[1]);
   }, [userTags]);
 
   const allRoots = useMemo(() => {
     const counts: Record<string, number> = {};
-    VERSES.forEach((v) =>
-      v.words.forEach((w) => { if (w.root) counts[w.root] = (counts[w.root] || 0) + 1; })
-    );
+    verses.forEach(v => v.words.forEach(w => { if (w.root) counts[w.root] = (counts[w.root] || 0) + 1; }));
     return Object.entries(counts).sort((a, b) => b[1] - a[1]);
-  }, []);
+  }, [verses]);
 
   const filtered = useMemo(() => {
     const q = query.trim();
     const qNorm = norm(q);
     const qLower = q.toLowerCase();
     const refMatch = q.match(/^(\d+):(\d+)$/);
-
-    return VERSES.filter((v) => {
+    return verses.filter(v => {
       if (refMatch) return v.surah === +refMatch[1] && v.ayah === +refMatch[2];
-      if (activeRoot && !v.words.some((w) => w.root === activeRoot)) return false;
-      if (activeTags.length) {
-        const tags = userTags[v.id] || [];
-        if (!activeTags.every((t) => tags.includes(t))) return false;
-      }
+      if (activeRoot && !v.words.some(w => w.root === activeRoot)) return false;
+      if (activeTags.length) { const tags = userTags[v.id] || []; if (!activeTags.every(t => tags.includes(t))) return false; }
       if (q) {
-        const hitArabic = norm(v.arabic).includes(qNorm) || v.words.some((w) => norm(w.ar).includes(qNorm));
-        const hitRoot = v.words.some((w) => w.root && (w.root.includes(q) || norm(w.root).includes(qNorm)));
-        const hitTransliteration = v.words.some((w) => w.tr.toLowerCase().includes(qLower));
-        const hitName = v.surahName.includes(q);
-        if (!(hitArabic || hitRoot || hitTransliteration || hitName)) return false;
+        const hitAr = norm(v.arabic).includes(qNorm) || v.words.some(w => norm(w.ar).includes(qNorm));
+        const hitRoot = v.words.some(w => w.root && w.root.includes(q));
+        const hitTr = v.words.some(w => (w.tr ?? '').toLowerCase().includes(qLower));
+        if (!(hitAr || hitRoot || hitTr)) return false;
       }
       return true;
     });
-  }, [query, activeRoot, activeTags, userTags]);
+  }, [verses, query, activeRoot, activeTags, userTags]);
 
-  const selectedVerse = useMemo(
-    () => VERSES.find((v) => v.id === selectedId) ?? null,
-    [selectedId]
-  );
+  const selectedVerse = useMemo(() => verses.find(v => v.id === selectedId) ?? null, [verses, selectedId]);
 
-  const addTag = (verseId: string, tag: string) => {
-    const t = tag.trim();
-    if (!t) return;
-    setUserTags((prev) => {
-      const cur = prev[verseId] || [];
-      if (cur.includes(t)) return prev;
-      return { ...prev, [verseId]: [...cur, t] };
-    });
-  };
-
-  const removeTag = (verseId: string, tag: string) => {
-    setUserTags((prev) => {
-      const cur = (prev[verseId] || []).filter((x) => x !== tag);
-      const next = { ...prev };
-      if (cur.length) next[verseId] = cur; else delete next[verseId];
-      return next;
-    });
-  };
-
-  const setNote = (verseId: string, note: string) => {
-    setUserNotes((prev) => {
-      const next = { ...prev };
-      if (note.trim()) next[verseId] = note; else delete next[verseId];
-      return next;
-    });
-  };
-
-  const toggleActiveTag = (t: string) =>
-    setActiveTags((cur) => cur.includes(t) ? cur.filter((x) => x !== t) : [...cur, t]);
-
-  const handleRootClick = (root: string) => {
-    setActiveRoot(root);
-    setSelectedWord(null);
-  };
-
-  const clearFilters = () => {
-    setQuery("");
-    setActiveTags([]);
-    setActiveRoot(null);
-  };
+  const addTag = (verseId: string, tag: string) => { const t = tag.trim(); if (!t) return; setUserTags(p => { const c = p[verseId] || []; if (c.includes(t)) return p; return { ...p, [verseId]: [...c, t] }; }); };
+  const removeTag = (verseId: string, tag: string) => { setUserTags(p => { const c = (p[verseId] || []).filter(x => x !== tag); const n = { ...p }; if (c.length) n[verseId] = c; else delete n[verseId]; return n; }); };
+  const setNote = (verseId: string, note: string) => { setUserNotes(p => { const n = { ...p }; if (note.trim()) n[verseId] = note; else delete n[verseId]; return n; }); };
+  const toggleActiveTag = (t: string) => setActiveTags(c => c.includes(t) ? c.filter(x => x !== t) : [...c, t]);
+  const handleRootClick = (root: string) => { setActiveRoot(root); setSelectedWord(null); };
+  const clearFilters = () => { setQuery(""); setActiveTags([]); setActiveRoot(null); };
 
   return (
-    <div
-      className="min-h-screen w-full"
-      style={{
-        background: "#f5efe2",
-        backgroundImage:
-          "radial-gradient(1200px 600px at 0% 0%, rgba(45,93,79,0.06), transparent 60%), radial-gradient(900px 500px at 100% 100%, rgba(140,80,30,0.05), transparent 60%)",
-        color: "#1a1612",
-        fontFamily: "'DM Sans', system-ui, sans-serif",
-      }}
-    >
+    <div className="min-h-screen w-full" style={{ background: "#f5efe2", backgroundImage: "radial-gradient(1200px 600px at 0% 0%, rgba(45,93,79,0.06), transparent 60%), radial-gradient(900px 500px at 100% 100%, rgba(140,80,30,0.05), transparent 60%)", color: "#1a1612", fontFamily: "'DM Sans', system-ui, sans-serif" }}>
       <FontStyles />
 
       <header className="border-b" style={{ borderColor: "#d9cfb6", background: "rgba(253,250,240,0.7)", backdropFilter: "blur(10px)" }}>
@@ -164,48 +120,52 @@ function App() {
               <BookOpen size={20} strokeWidth={1.5} />
             </div>
             <div>
-              <h1 style={{ fontFamily: "'Cormorant Garamond', serif", fontWeight: 600, fontSize: 24, lineHeight: 1, letterSpacing: "-0.01em" }}>
-                مِشكَاة
-              </h1>
-              <p className="text-xs mt-0.5" style={{ color: "#6b6052", letterSpacing: "0.05em" }}>
-                مِنصَّةُ البَحثِ القُرآنِي
-              </p>
+              <h1 style={{ fontFamily: "'Cormorant Garamond', serif", fontWeight: 600, fontSize: 24, lineHeight: 1 }}>مِشكَاة</h1>
+              <p className="text-xs mt-0.5" style={{ color: "#6b6052", letterSpacing: "0.05em" }}>مِنصَّةُ البَحثِ القُرآنِي</p>
             </div>
           </div>
 
           <div className="flex-1 max-w-2xl mx-auto relative">
             <Search size={16} className="absolute right-3 top-1/2 -translate-y-1/2" style={{ color: "#8a7d68" }} />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
+            <input value={query} onChange={e => setQuery(e.target.value)}
               placeholder="ابحث بالعربية، أو بالجذر (مثال: ك ت ب)، أو بالمرجع (2:255)…"
-              dir="rtl"
-              className="w-full pr-10 pl-4 py-2.5 rounded-sm outline-none text-sm"
-              style={{ background: "#fdfaf0", border: "1px solid #d9cfb6", fontFamily: "'Amiri', serif", fontSize: 16 }}
-            />
+              dir="rtl" className="w-full pr-10 pl-4 py-2.5 rounded-sm outline-none text-sm"
+              style={{ background: "#fdfaf0", border: "1px solid #d9cfb6", fontFamily: "'Amiri', serif", fontSize: 16 }} />
           </div>
 
           <div className="text-xs" style={{ color: "#6b6052" }}>
             <span style={{ fontWeight: 600, color: "#1a1612" }}>{filtered.length}</span>
             <span className="mx-1">/</span>
-            <span>{VERSES.length} آية</span>
+            <span>{verses.length} آية</span>
           </div>
         </div>
-        {storageError && (
-          <div className="max-w-[1400px] mx-auto px-6 pb-3 text-xs" style={{ color: "#8a4a1a" }} dir="rtl">
-            {storageError}
-          </div>
-        )}
+        {storageError && <div className="max-w-[1400px] mx-auto px-6 pb-3 text-xs" style={{ color: "#8a4a1a" }} dir="rtl">{storageError}</div>}
       </header>
 
       <div className="max-w-[1400px] mx-auto px-6 py-6 grid gap-6" style={{ gridTemplateColumns: "260px 1fr 360px" }}>
-        {/* Sidebar: filters */}
         <aside className="space-y-6">
+          {/* Surah picker */}
+          <Section title="السور" icon={<BookOpen size={14} />}>
+            <div className="space-y-0.5 max-h-[320px] overflow-y-auto custom-scroll">
+              {surahIndex.map(s => (
+                <button key={s.id} onClick={() => setSelectedSurahId(s.id)}
+                  className="w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-sm transition-colors text-right"
+                  style={{ background: selectedSurahId === s.id ? "#2d5d4f" : "transparent", color: selectedSurahId === s.id ? "#f5efe2" : "#3d362c" }}
+                  onMouseEnter={e => { if (selectedSurahId !== s.id) e.currentTarget.style.background = "#ece2c8"; }}
+                  onMouseLeave={e => { if (selectedSurahId !== s.id) e.currentTarget.style.background = "transparent"; }}
+                >
+                  <span className="text-xs" style={{ opacity: 0.7 }}>{s.totalVerses}</span>
+                  <span dir="rtl" style={{ fontFamily: "'Amiri', serif", fontSize: 16 }}>{s.name}</span>
+                  <span className="text-xs font-mono" style={{ opacity: 0.6, minWidth: 20, textAlign: "left" }}>{s.id}</span>
+                </button>
+              ))}
+            </div>
+          </Section>
+
+          {/* Filters */}
           <Section title="التصفية" icon={<Filter size={14} />}>
             {(activeTags.length > 0 || activeRoot || query) ? (
-              <button onClick={clearFilters} className="text-xs underline-offset-2 hover:underline" style={{ color: "#2d5d4f" }} dir="rtl">
-                مسح جميع التصفيات
-              </button>
+              <button onClick={clearFilters} className="text-xs underline-offset-2 hover:underline" style={{ color: "#2d5d4f" }} dir="rtl">مسح جميع التصفيات</button>
             ) : (
               <p className="text-xs italic" style={{ color: "#8a7d68" }} dir="rtl">لا توجد تصفية نشطة.</p>
             )}
@@ -219,22 +179,15 @@ function App() {
             )}
           </Section>
 
+          {/* Tags */}
           <Section title="وسوماتك" icon={<Tag size={14} />} count={allTags.length}>
             {allTags.length === 0 ? (
               <p className="text-xs italic" style={{ color: "#8a7d68" }} dir="rtl">سمِّ آية لبناء تصنيفك.</p>
             ) : (
               <div className="flex flex-wrap gap-1.5">
                 {allTags.map(([t, c]) => (
-                  <button
-                    key={t}
-                    onClick={() => toggleActiveTag(t)}
-                    className="px-2 py-1 rounded-sm text-xs transition-colors"
-                    style={{
-                      background: activeTags.includes(t) ? "#2d5d4f" : "#ece2c8",
-                      color: activeTags.includes(t) ? "#f5efe2" : "#3d362c",
-                      border: "1px solid " + (activeTags.includes(t) ? "#2d5d4f" : "#d9cfb6"),
-                    }}
-                  >
+                  <button key={t} onClick={() => toggleActiveTag(t)} className="px-2 py-1 rounded-sm text-xs transition-colors"
+                    style={{ background: activeTags.includes(t) ? "#2d5d4f" : "#ece2c8", color: activeTags.includes(t) ? "#f5efe2" : "#3d362c", border: "1px solid " + (activeTags.includes(t) ? "#2d5d4f" : "#d9cfb6") }}>
                     {t} <span style={{ opacity: 0.7 }}>· {c}</span>
                   </button>
                 ))}
@@ -242,20 +195,15 @@ function App() {
             )}
           </Section>
 
-          <Section title="الجذور في المتن" icon={<Hash size={14} />} count={allRoots.length}>
-            <div className="space-y-1 max-h-[280px] overflow-y-auto pr-1 custom-scroll">
+          {/* Roots */}
+          <Section title="الجذور في السورة" icon={<Hash size={14} />} count={allRoots.length}>
+            <div className="space-y-1 max-h-[200px] overflow-y-auto pr-1 custom-scroll">
               {allRoots.map(([r, c]) => (
-                <button
-                  key={r}
-                  onClick={() => handleRootClick(r)}
+                <button key={r} onClick={() => handleRootClick(r)}
                   className="w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-sm transition-colors"
-                  style={{
-                    background: activeRoot === r ? "#2d5d4f" : "transparent",
-                    color: activeRoot === r ? "#f5efe2" : "#3d362c",
-                  }}
-                  onMouseEnter={(e) => { if (activeRoot !== r) e.currentTarget.style.background = "#ece2c8"; }}
-                  onMouseLeave={(e) => { if (activeRoot !== r) e.currentTarget.style.background = "transparent"; }}
-                >
+                  style={{ background: activeRoot === r ? "#2d5d4f" : "transparent", color: activeRoot === r ? "#f5efe2" : "#3d362c" }}
+                  onMouseEnter={e => { if (activeRoot !== r) e.currentTarget.style.background = "#ece2c8"; }}
+                  onMouseLeave={e => { if (activeRoot !== r) e.currentTarget.style.background = "transparent"; }}>
                   <span className="flex items-center gap-2 text-xs" style={{ opacity: 0.8 }}>
                     <span>{c}</span>
                     <span className="italic" style={{ fontSize: 11 }}>{ROOT_GLOSS[r]?.split("،")[0]}</span>
@@ -267,54 +215,42 @@ function App() {
           </Section>
         </aside>
 
-        {/* Center: verse list */}
+        {/* Center */}
         <main className="space-y-4 min-w-0">
-          {filtered.length === 0 ? (
+          {surahLoading ? (
+            <div className="flex items-center justify-center py-20">
+              <Loader2 size={28} className="animate-spin" style={{ color: "#2d5d4f" }} />
+            </div>
+          ) : filtered.length === 0 ? (
             <div className="rounded-sm p-10 text-center" style={{ background: "#fdfaf0", border: "1px dashed #d9cfb6" }}>
-              <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 22, color: "#5c5247" }}>
-                لا توجد نتائج مطابقة.
-              </p>
-              <p className="text-xs mt-2" style={{ color: "#8a7d68" }} dir="rtl">
-                جرِّب مسح التصفيات أو ابحث بجذر معروف مثل{" "}
-                <span style={{ fontFamily: "'Amiri', serif" }}>ر ح م</span>
-              </p>
+              <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 22, color: "#5c5247" }}>لا توجد نتائج مطابقة.</p>
+              <p className="text-xs mt-2" style={{ color: "#8a7d68" }} dir="rtl">جرِّب مسح التصفيات أو ابحث بجذر معروف مثل <span style={{ fontFamily: "'Amiri', serif" }}>ر ح م</span></p>
             </div>
           ) : (
-            filtered.map((v) => (
-              <VerseCard
-                key={v.id}
-                verse={v}
-                tags={userTags[v.id] || []}
-                hasNote={!!userNotes[v.id]}
-                isSelected={selectedId === v.id}
-                onSelect={() => setSelectedId(v.id)}
-                onWordClick={(idx) => { setSelectedId(v.id); setSelectedWord({ verseId: v.id, idx }); }}
+            filtered.map(v => (
+              <VerseCard key={v.id} verse={v} tags={userTags[v.id] || []} hasNote={!!userNotes[v.id]}
+                isSelected={selectedId === v.id} onSelect={() => setSelectedId(v.id)}
+                onWordClick={idx => { setSelectedId(v.id); setSelectedWord({ verseId: v.id, idx }); }}
                 selectedWordIdx={selectedWord?.verseId === v.id ? selectedWord.idx : null}
-                activeRoot={activeRoot}
-                onRootClick={handleRootClick}
-              />
+                activeRoot={activeRoot} onRootClick={handleRootClick} />
             ))
           )}
         </main>
 
-        {/* Right: detail panel */}
-        <aside className="space-y-4">
-          <DetailPanel
-            verse={selectedVerse}
-            wordSel={selectedWord}
+        {/* Right */}
+        <aside>
+          <DetailPanel verse={selectedVerse} wordSel={selectedWord}
             tags={selectedVerse ? (userTags[selectedVerse.id] || []) : []}
             note={selectedVerse ? (userNotes[selectedVerse.id] || "") : ""}
             allTagSuggestions={allTags.map(([t]) => t)}
-            onAddTag={addTag}
-            onRemoveTag={removeTag}
-            onSetNote={setNote}
-            onRootClick={handleRootClick}
-          />
+            onAddTag={addTag} onRemoveTag={removeTag} onSetNote={setNote} onRootClick={handleRootClick}
+            surahName={surahData?.name ?? ""} />
         </aside>
       </div>
 
       <footer className="max-w-[1400px] mx-auto px-6 py-8 text-xs" style={{ color: "#8a7d68" }} dir="rtl">
-        يعرض متناً تجريبياً — الفاتحة، ومختارات من البقرة، وسورة الإخلاص. للتوسع، اربط واجهة برمجة Quran.com أو مدوّنة القرآن العربي.
+        بيانات الشكل القرآني: مشروع التنزيل (CC BY-ND 3.0). بيانات الصرف والجذور: مدوّنة القرآن العربي — Kais Dukes (GPL v3).{" "}
+        <a href="http://corpus.quran.com" style={{ color: "#2d5d4f" }}>corpus.quran.com</a>
       </footer>
     </div>
   );
@@ -404,9 +340,6 @@ function VerseCard({
         <div className="px-2 py-0.5 rounded-sm text-xs font-mono" style={{ background: "#2d5d4f", color: "#f5efe2", letterSpacing: "0.05em" }}>
           {verse.surah}:{verse.ayah}
         </div>
-        <div dir="rtl" style={{ fontFamily: "'Amiri', serif", fontSize: 18, color: "#3d362c" }}>
-          {verse.surahName}
-        </div>
         <div className="ml-auto flex items-center gap-2">
           {tags.map((t) => <Chip key={t}>{t}</Chip>)}
           {hasNote && (
@@ -457,7 +390,7 @@ function VerseCard({
 }
 
 function DetailPanel({
-  verse, wordSel, tags, note, allTagSuggestions, onAddTag, onRemoveTag, onSetNote, onRootClick,
+  verse, wordSel, tags, note, allTagSuggestions, onAddTag, onRemoveTag, onSetNote, onRootClick, surahName,
 }: {
   verse: Verse | null;
   wordSel: { verseId: string; idx: number } | null;
@@ -468,6 +401,7 @@ function DetailPanel({
   onRemoveTag: (verseId: string, tag: string) => void;
   onSetNote: (verseId: string, note: string) => void;
   onRootClick: (root: string) => void;
+  surahName: string;
 }) {
   const [tagInput, setTagInput] = useState("");
   const [showSuggest, setShowSuggest] = useState(false);
@@ -507,7 +441,7 @@ function DetailPanel({
           {verse.surah}:{verse.ayah}
         </div>
         <div dir="rtl" style={{ fontFamily: "'Amiri', serif", fontSize: 22, color: "#1a1612", marginTop: 2 }}>
-          سورة {verse.surahName}
+          سورة {surahName}
         </div>
       </div>
 
@@ -524,7 +458,7 @@ function DetailPanel({
             <div dir="rtl" style={{ fontFamily: "'Amiri', serif", fontSize: 42, lineHeight: 1.4, color: "#1a1612" }}>
               {word.ar}
             </div>
-            <div className="text-sm italic mt-1" style={{ color: "#5c5247" }}>{word.tr}</div>
+            {word.tr && <div className="text-sm italic mt-1" style={{ color: "#5c5247" }}>{word.tr}</div>}
             <div className="mt-3 grid grid-cols-2 gap-3 text-xs">
               <div>
                 <div className="uppercase tracking-wider mb-1" style={{ color: "#8a7d68", letterSpacing: "0.1em" }} dir="rtl">اللمّة</div>
