@@ -3,7 +3,7 @@ export const stripDiacritics = (s: string): string =>
 
 export const norm = (s: string): string =>
   stripDiacritics(s)
-    .replace(/[إأآا]/g, "ا")
+    .replace(/[إأآاٱ]/g, "ا")
     .replace(/ى/g, "ي")
     .replace(/ة/g, "ه")
     .trim();
