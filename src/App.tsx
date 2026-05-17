@@ -101,14 +101,23 @@ function App() {
   const globalResults = useMemo(() => {
     const q = query.trim();
     if (q.length < 2 || !searchIndex.length) return null; // null = not in global search mode
-    const qNorm = norm(q);
     const refMatch = q.match(/^(\d+):(\d+)$/);
+    const terms = q.split(/\s+/).filter(Boolean);
+    // Multi-word AND search: every term ≥2 chars means the user typed real words, not a root
+    const isMultiWord = terms.length > 1 && terms.every(t => t.length >= 2);
+
     return searchIndex.filter(e => {
       if (refMatch) return e.surah === +refMatch[1] && e.ayah === +refMatch[2];
       if (activeRoot && !e.roots.includes(activeRoot)) return false;
-      const hitAr = norm(e.arabic).includes(qNorm);
-      const hitRoot = e.roots.some(r => r.includes(q));
-      return hitAr || hitRoot;
+      if (isMultiWord) {
+        // Every term must appear somewhere in the verse (Arabic text or roots)
+        return terms.every(t => {
+          const tn = norm(t);
+          return norm(e.arabic).includes(tn) || e.roots.some(r => r.includes(t));
+        });
+      }
+      // Single term or root pattern (e.g. "ر ح م") — phrase match
+      return norm(e.arabic).includes(norm(q)) || e.roots.some(r => r.includes(q));
     });
   }, [query, searchIndex, activeRoot]);
 
