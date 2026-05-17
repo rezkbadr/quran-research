@@ -97,10 +97,10 @@ function App() {
     return Object.entries(counts).sort((a, b) => b[1] - a[1]);
   }, [verses]);
 
-  // Global search across full Quran (only when query is non-empty)
+  // Global search across full Quran (only when query has at least 2 chars)
   const globalResults = useMemo(() => {
     const q = query.trim();
-    if (!q || !searchIndex.length) return null; // null = not in global search mode
+    if (q.length < 2 || !searchIndex.length) return null; // null = not in global search mode
     const qNorm = norm(q);
     const refMatch = q.match(/^(\d+):(\d+)$/);
     return searchIndex.filter(e => {
