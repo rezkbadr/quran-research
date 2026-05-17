@@ -1,8 +1,8 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import { Search, Tag, X, BookOpen, Hash, FileText, Plus, Filter, Bookmark, Type, Loader2, Sun, Moon } from "lucide-react";
+import { Search, Tag, X, BookOpen, Hash, FileText, Plus, Filter, Bookmark, Type, Loader2, Sun, Moon, Copy, Eraser, Check } from "lucide-react";
 import type { Verse, Word, SurahMeta, SurahData } from "./types";
 import { ROOT_GLOSS } from "./data/verses";
-import { norm } from "./data/helpers";
+import { norm, stripDiacritics } from "./data/helpers";
 
 interface SearchEntry {
   id: string;
@@ -405,6 +405,56 @@ function Chip({ children, onRemove, variant }: {
   );
 }
 
+function CopyVerseButtons({ verse }: { verse: { arabic: string; surah: number; ayah: number } }) {
+  const [copied, setCopied] = useState<"with" | "without" | null>(null);
+
+  const arabic = verse.arabic;
+  const ref = `${verse.surah}:${verse.ayah}`;
+
+  const doCopy = async (variant: "with" | "without", e: React.MouseEvent) => {
+    e.stopPropagation();
+    const text = variant === "with" ? arabic : stripDiacritics(arabic);
+    try {
+      await navigator.clipboard.writeText(`${text} (${ref})`);
+      setCopied(variant);
+      setTimeout(() => setCopied(null), 1200);
+    } catch (_) {}
+  };
+
+  const btnStyle: React.CSSProperties = {
+    background: "transparent",
+    border: "1px solid var(--border)",
+    color: "var(--text-3)",
+  };
+
+  return (
+    <div className="flex items-center gap-1">
+      <button
+        onClick={e => doCopy("with", e)}
+        className="w-7 h-7 rounded-sm flex items-center justify-center transition-colors"
+        style={btnStyle}
+        onMouseEnter={e => { e.currentTarget.style.background = "var(--bg-muted)"; }}
+        onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
+        aria-label="نسخ مع التشكيل"
+        title="نسخ مع التشكيل"
+      >
+        {copied === "with" ? <Check size={13} strokeWidth={2} style={{ color: "var(--accent)" }} /> : <Copy size={13} strokeWidth={1.75} />}
+      </button>
+      <button
+        onClick={e => doCopy("without", e)}
+        className="w-7 h-7 rounded-sm flex items-center justify-center transition-colors"
+        style={btnStyle}
+        onMouseEnter={e => { e.currentTarget.style.background = "var(--bg-muted)"; }}
+        onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
+        aria-label="نسخ بدون تشكيل"
+        title="نسخ بدون تشكيل"
+      >
+        {copied === "without" ? <Check size={13} strokeWidth={2} style={{ color: "var(--accent)" }} /> : <Eraser size={13} strokeWidth={1.75} />}
+      </button>
+    </div>
+  );
+}
+
 function VerseCard({
   verse, tags, hasNote, isSelected, onSelect, onWordClick, selectedWordIdx, activeRoot, onRootClick,
 }: {
@@ -432,6 +482,7 @@ function VerseCard({
         <div className="px-2 py-0.5 rounded-sm text-xs font-mono" style={{ background: "var(--accent)", color: "var(--bg)", letterSpacing: "0.05em" }}>
           {verse.surah}:{verse.ayah}
         </div>
+        <CopyVerseButtons verse={verse} />
         <div className="ml-auto flex items-center gap-2">
           {tags.map((t) => <Chip key={t}>{t}</Chip>)}
           {hasNote && (
@@ -683,6 +734,9 @@ function SearchResultCard({ entry, activeRoot, isSelected, onSelect }: {
           {entry.surah}:{entry.ayah}
         </div>
         <div dir="rtl" style={{ fontFamily: "'Amiri', serif", fontSize: 16, color: "var(--text-2)" }}>{entry.name}</div>
+        <div className="ml-auto">
+          <CopyVerseButtons verse={entry} />
+        </div>
       </div>
       <div className="px-5 py-5" dir="rtl"
         style={{ fontFamily: "'Amiri', serif", fontSize: 28, lineHeight: 2, color: "var(--text)", textAlign: "right" }}>
