@@ -90,8 +90,8 @@ function App() {
       if (q) {
         const hitArabic = norm(v.arabic).includes(qNorm) || v.words.some((w) => norm(w.ar).includes(qNorm));
         const hitRoot = v.words.some((w) => w.root && (w.root.includes(q) || norm(w.root).includes(qNorm)));
-        const hitTransliteration = v.words.some((w) => w.tr.toLowerCase().includes(qLower));
-        const hitName = v.surahName.includes(q);
+        const hitTransliteration = v.words.some((w) => (w.tr ?? '').toLowerCase().includes(qLower));
+        const hitName = (v.surahName ?? '').includes(q);
         if (!(hitArabic || hitRoot || hitTransliteration || hitName)) return false;
       }
       return true;
