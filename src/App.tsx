@@ -4,6 +4,15 @@ import type { Verse, Word, SurahMeta, SurahData } from "./types";
 import { ROOT_GLOSS } from "./data/verses";
 import { norm } from "./data/helpers";
 
+interface SearchEntry {
+  id: string;
+  surah: number;
+  ayah: number;
+  name: string;
+  arabic: string;
+  roots: string[];
+}
+
 declare global {
   interface Window {
     storage?: {
@@ -14,10 +23,12 @@ declare global {
 }
 
 function App() {
+  const [searchIndex, setSearchIndex] = useState<SearchEntry[]>([]);
   const [surahIndex, setSurahIndex] = useState<SurahMeta[]>([]);
   const [selectedSurahId, setSelectedSurahId] = useState<number>(1);
   const [surahData, setSurahData] = useState<SurahData | null>(null);
   const [surahLoading, setSurahLoading] = useState(false);
+  const [, setPendingVerseId] = useState<string | null>(null);
 
   const [userTags, setUserTags] = useState<Record<string, string[]>>({});
   const [userNotes, setUserNotes] = useState<Record<string, string>>({});
@@ -30,9 +41,10 @@ function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedWord, setSelectedWord] = useState<{ verseId: string; idx: number } | null>(null);
 
-  // Load surah index
+  // Load surah index + search index once
   useEffect(() => {
     fetch("/data/index.json").then(r => r.json()).then(setSurahIndex).catch(() => {});
+    fetch("/data/search-index.json").then(r => r.json()).then(setSearchIndex).catch(() => {});
   }, []);
 
   // Load surah data when selection changes
@@ -41,11 +53,15 @@ function App() {
     setSurahData(null);
     setSelectedId(null);
     setSelectedWord(null);
-    setQuery("");
     setActiveRoot(null);
     fetch(`/data/surah-${selectedSurahId}.json`)
       .then(r => r.json())
-      .then((d: SurahData) => { setSurahData(d); setSurahLoading(false); })
+      .then((d: SurahData) => {
+        setSurahData(d);
+        setSurahLoading(false);
+        // If we navigated here from a global search result, select that verse
+        setPendingVerseId(p => { if (p) setSelectedId(p); return null; });
+      })
       .catch(() => setSurahLoading(false));
   }, [selectedSurahId]);
 
@@ -81,21 +97,27 @@ function App() {
     return Object.entries(counts).sort((a, b) => b[1] - a[1]);
   }, [verses]);
 
-  const filtered = useMemo(() => {
+  // Global search across full Quran (only when query is non-empty)
+  const globalResults = useMemo(() => {
     const q = query.trim();
+    if (!q || !searchIndex.length) return null; // null = not in global search mode
     const qNorm = norm(q);
-    const qLower = q.toLowerCase();
     const refMatch = q.match(/^(\d+):(\d+)$/);
+    return searchIndex.filter(e => {
+      if (refMatch) return e.surah === +refMatch[1] && e.ayah === +refMatch[2];
+      if (activeRoot && !e.roots.includes(activeRoot)) return false;
+      const hitAr = norm(e.arabic).includes(qNorm);
+      const hitRoot = e.roots.some(r => r.includes(q));
+      return hitAr || hitRoot;
+    });
+  }, [query, searchIndex, activeRoot]);
+
+  // Browse mode: filter within the loaded surah (no query active)
+  const filtered = useMemo(() => {
+    if (query.trim()) return []; // handled by globalResults
     return verses.filter(v => {
-      if (refMatch) return v.surah === +refMatch[1] && v.ayah === +refMatch[2];
       if (activeRoot && !v.words.some(w => w.root === activeRoot)) return false;
       if (activeTags.length) { const tags = userTags[v.id] || []; if (!activeTags.every(t => tags.includes(t))) return false; }
-      if (q) {
-        const hitAr = norm(v.arabic).includes(qNorm) || v.words.some(w => norm(w.ar).includes(qNorm));
-        const hitRoot = v.words.some(w => w.root && w.root.includes(q));
-        const hitTr = v.words.some(w => (w.tr ?? '').toLowerCase().includes(qLower));
-        if (!(hitAr || hitRoot || hitTr)) return false;
-      }
       return true;
     });
   }, [verses, query, activeRoot, activeTags, userTags]);
@@ -108,6 +130,17 @@ function App() {
   const toggleActiveTag = (t: string) => setActiveTags(c => c.includes(t) ? c.filter(x => x !== t) : [...c, t]);
   const handleRootClick = (root: string) => { setActiveRoot(root); setSelectedWord(null); };
   const clearFilters = () => { setQuery(""); setActiveTags([]); setActiveRoot(null); };
+
+  const navigateToVerse = (entry: SearchEntry) => {
+    setPendingVerseId(entry.id);
+    if (selectedSurahId === entry.surah) {
+      // Surah already loaded — select directly
+      setSelectedId(entry.id);
+      setPendingVerseId(null);
+    } else {
+      setSelectedSurahId(entry.surah);
+    }
+  };
 
   return (
     <div className="min-h-screen w-full" style={{ background: "#f5efe2", backgroundImage: "radial-gradient(1200px 600px at 0% 0%, rgba(45,93,79,0.06), transparent 60%), radial-gradient(900px 500px at 100% 100%, rgba(140,80,30,0.05), transparent 60%)", color: "#1a1612", fontFamily: "'DM Sans', system-ui, sans-serif" }}>
@@ -134,9 +167,9 @@ function App() {
           </div>
 
           <div className="text-xs" style={{ color: "#6b6052" }}>
-            <span style={{ fontWeight: 600, color: "#1a1612" }}>{filtered.length}</span>
+            <span style={{ fontWeight: 600, color: "#1a1612" }}>{globalResults ? globalResults.length : filtered.length}</span>
             <span className="mx-1">/</span>
-            <span>{verses.length} آية</span>
+            <span>{globalResults ? `${searchIndex.length} آية` : `${verses.length} آية`}</span>
           </div>
         </div>
         {storageError && <div className="max-w-[1400px] mx-auto px-6 pb-3 text-xs" style={{ color: "#8a4a1a" }} dir="rtl">{storageError}</div>}
@@ -217,7 +250,20 @@ function App() {
 
         {/* Center */}
         <main className="space-y-4 min-w-0">
-          {surahLoading ? (
+          {globalResults ? (
+            // Global search results
+            globalResults.length === 0 ? (
+              <div className="rounded-sm p-10 text-center" style={{ background: "#fdfaf0", border: "1px dashed #d9cfb6" }}>
+                <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 22, color: "#5c5247" }}>لا توجد نتائج مطابقة.</p>
+              </div>
+            ) : (
+              globalResults.map(e => (
+                <SearchResultCard key={e.id} entry={e} activeRoot={activeRoot}
+                  isSelected={selectedId === e.id}
+                  onSelect={() => navigateToVerse(e)} />
+              ))
+            )
+          ) : surahLoading ? (
             <div className="flex items-center justify-center py-20">
               <Loader2 size={28} className="animate-spin" style={{ color: "#2d5d4f" }} />
             </div>
@@ -570,6 +616,47 @@ function DetailPanel({
         />
       </div>
     </div>
+  );
+}
+
+function SearchResultCard({ entry, activeRoot, isSelected, onSelect }: {
+  entry: SearchEntry;
+  activeRoot: string | null;
+  isSelected: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <article onClick={onSelect} className="rounded-sm cursor-pointer transition-all"
+      style={{
+        background: isSelected ? "#fdfaf0" : "#fbf6e8",
+        border: "1px solid " + (isSelected ? "#2d5d4f" : "#d9cfb6"),
+        boxShadow: isSelected ? "0 1px 0 #2d5d4f, 0 4px 12px rgba(45,93,79,0.08)" : "none",
+      }}>
+      <div className="px-5 pt-4 pb-2 flex items-center gap-3" style={{ borderBottom: "1px solid #ece2c8" }}>
+        <div className="px-2 py-0.5 rounded-sm text-xs font-mono" style={{ background: "#2d5d4f", color: "#f5efe2", letterSpacing: "0.05em" }}>
+          {entry.surah}:{entry.ayah}
+        </div>
+        <div dir="rtl" style={{ fontFamily: "'Amiri', serif", fontSize: 16, color: "#3d362c" }}>{entry.name}</div>
+      </div>
+      <div className="px-5 py-5" dir="rtl"
+        style={{ fontFamily: "'Amiri', serif", fontSize: 28, lineHeight: 2, color: "#1a1612", textAlign: "right" }}>
+        {entry.arabic}
+      </div>
+      {entry.roots.length > 0 && (
+        <div className="px-5 pb-4 flex flex-wrap gap-1.5" dir="rtl">
+          {entry.roots.map(r => (
+            <span key={r} className="px-2 py-0.5 rounded-sm text-xs"
+              style={{
+                background: activeRoot === r ? "rgba(45,93,79,0.18)" : "transparent",
+                border: "1px solid " + (activeRoot === r ? "#2d5d4f" : "#d9cfb6"),
+                color: "#3d362c",
+              }}>
+              <span dir="rtl" style={{ fontFamily: "'Amiri', serif", fontSize: 13, fontWeight: 600 }}>{r}</span>
+            </span>
+          ))}
+        </div>
+      )}
+    </article>
   );
 }
 
