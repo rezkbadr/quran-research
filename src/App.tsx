@@ -11,6 +11,7 @@ interface SearchEntry {
   name: string;
   arabic: string;
   roots: string[];
+  wordRoots: (string | null)[];
 }
 
 declare global {
@@ -759,7 +760,18 @@ function SearchResultCard({ entry, activeRoot, isSelected, onSelect }: {
       </div>
       <div className="px-5 py-5" dir="rtl"
         style={{ fontFamily: "'Amiri', serif", fontSize: 28, lineHeight: 2, color: "var(--text)", textAlign: "right" }}>
-        {entry.arabic}
+        {entry.arabic.split(" ").map((tok, i) => {
+          const isMatch = activeRoot != null && entry.wordRoots[i] === activeRoot;
+          return (
+            <span
+              key={i}
+              className={"arabic-word" + (isMatch ? " is-root-match" : "")}
+              style={{ display: "inline-block", padding: "2px 6px", marginInline: 2, borderRadius: 2 }}
+            >
+              {tok}
+            </span>
+          );
+        })}
       </div>
       {entry.roots.length > 0 && (
         <div className="px-5 pb-4 flex flex-wrap gap-1.5" dir="rtl">
