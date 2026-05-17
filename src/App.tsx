@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import { Search, Tag, X, BookOpen, Hash, FileText, Plus, Filter, Bookmark, Type, Loader2, Sun, Moon, Copy, Eraser, Check, ArrowRight } from "lucide-react";
+import { Search, Tag, X, BookOpen, FileText, Plus, Filter, Bookmark, Type, Loader2, Sun, Moon, Copy, Eraser, Check, ArrowRight } from "lucide-react";
 import type { Verse, Word, SurahMeta, SurahData } from "./types";
 import { ROOT_GLOSS } from "./data/verses";
 import { norm, stripDiacritics } from "./data/helpers";
@@ -124,12 +124,6 @@ function App() {
     Object.values(userTags).forEach(arr => arr.forEach(t => { counts[t] = (counts[t] || 0) + 1; }));
     return Object.entries(counts).sort((a, b) => b[1] - a[1]);
   }, [userTags]);
-
-  const allRoots = useMemo(() => {
-    const counts: Record<string, number> = {};
-    verses.forEach(v => v.words.forEach(w => { if (w.root) counts[w.root] = (counts[w.root] || 0) + 1; }));
-    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
-  }, [verses]);
 
   // Global search across full Quran (only when query has at least 2 chars)
   const globalResults = useMemo(() => {
@@ -317,24 +311,6 @@ function App() {
             )}
           </Section>
 
-          {/* Roots */}
-          <Section title="الجذور في السورة" icon={<Hash size={14} />} count={allRoots.length}>
-            <div className="space-y-1 max-h-[200px] overflow-y-auto pr-1 custom-scroll">
-              {allRoots.map(([r, c]) => (
-                <button key={r} onClick={() => handleRootClick(r)}
-                  className="w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-sm transition-colors"
-                  style={{ background: activeRoot === r ? "var(--accent)" : "transparent", color: activeRoot === r ? "var(--bg)" : "var(--text-2)" }}
-                  onMouseEnter={e => { if (activeRoot !== r) e.currentTarget.style.background = "var(--bg-muted)"; }}
-                  onMouseLeave={e => { if (activeRoot !== r) e.currentTarget.style.background = "transparent"; }}>
-                  <span className="flex items-center gap-2 text-xs" style={{ opacity: 0.8 }}>
-                    <span>{c}</span>
-                    <span className="italic" style={{ fontSize: 11 }}>{ROOT_GLOSS[r]?.split("،")[0]}</span>
-                  </span>
-                  <span dir="rtl" style={{ fontFamily: "'Amiri', serif", fontSize: 18, fontWeight: 600 }}>{r}</span>
-                </button>
-              ))}
-            </div>
-          </Section>
         </aside>
 
         {/* Center */}
