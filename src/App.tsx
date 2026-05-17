@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import { Search, Tag, X, BookOpen, FileText, Plus, Filter, Bookmark, Type, Loader2, Sun, Moon, Copy, Eraser, Check, ArrowRight } from "lucide-react";
+import { Search, Tag, X, BookOpen, FileText, Plus, Filter, Bookmark, Type, Loader2, Sun, Moon, Copy, Eraser, Check, ArrowRight, ArrowUp } from "lucide-react";
 import type { Verse, Word, SurahMeta, SurahData } from "./types";
 import { ROOT_GLOSS } from "./data/verses";
 import { norm, stripDiacritics } from "./data/helpers";
@@ -67,6 +67,14 @@ function App() {
         if (t?.value === "light" || t?.value === "dark") setTheme(t.value);
       } catch (_) {}
     })();
+  }, []);
+
+  const [scrolled, setScrolled] = useState(false);
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 220);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
   // Load surah index + search index once
@@ -359,6 +367,62 @@ function App() {
             surahName={surahData?.name ?? ""} />
         </aside>
       </div>
+
+      <div
+        className="fixed top-0 left-0 right-0 z-30"
+        style={{
+          background: "var(--header-bg)",
+          backdropFilter: "blur(10px)",
+          borderBottom: "1px solid var(--border)",
+          transform: scrolled ? "translateY(0)" : "translateY(-100%)",
+          opacity: scrolled ? 1 : 0,
+          pointerEvents: scrolled ? "auto" : "none",
+          transition: "transform 0.2s ease, opacity 0.2s ease",
+        }}
+      >
+        <div className="max-w-[1400px] mx-auto px-6 py-2.5 flex items-center gap-3 text-sm" dir="rtl">
+          {query.trim() && globalResults ? (
+            <>
+              <Search size={14} style={{ color: "var(--text-4)" }} />
+              <span style={{ color: "var(--text-4)" }}>البحث:</span>
+              <span style={{ color: "var(--text)", fontFamily: "'Amiri', serif" }}>«{query.trim()}»</span>
+            </>
+          ) : activeRoot && globalResults ? (
+            <>
+              <span style={{ color: "var(--text-4)" }}>الجذر:</span>
+              <span style={{ fontFamily: "'Amiri', serif", fontSize: 18, color: "var(--accent)", fontWeight: 600 }}>{activeRoot}</span>
+            </>
+          ) : surahData ? (
+            <>
+              <BookOpen size={14} style={{ color: "var(--text-4)" }} />
+              <span style={{ color: "var(--text-4)" }}>سورة</span>
+              <span style={{ fontFamily: "'Amiri', serif", fontSize: 18, color: "var(--text)" }}>{surahData.name}</span>
+            </>
+          ) : null}
+          <span className="mr-auto text-xs" style={{ color: "var(--text-4)" }}>
+            <span style={{ fontWeight: 600, color: "var(--text)" }}>{globalResults ? globalResults.length : filtered.length}</span>
+            <span className="mx-1">/</span>
+            <span>{globalResults ? `${searchIndex.length} آية` : `${verses.length} آية`}</span>
+          </span>
+        </div>
+      </div>
+
+      <button
+        onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+        aria-label="العودة إلى الأعلى"
+        title="العودة إلى الأعلى"
+        className="fixed bottom-6 left-6 w-11 h-11 rounded-full flex items-center justify-center z-30 transition-all"
+        style={{
+          background: "var(--accent)",
+          color: "var(--bg)",
+          boxShadow: "0 4px 14px rgb(var(--accent-rgb) / 0.35)",
+          transform: scrolled ? "translateY(0) scale(1)" : "translateY(20px) scale(0.85)",
+          opacity: scrolled ? 1 : 0,
+          pointerEvents: scrolled ? "auto" : "none",
+        }}
+      >
+        <ArrowUp size={18} strokeWidth={2} />
+      </button>
 
       <footer className="max-w-[1400px] mx-auto px-6 py-8 text-xs" style={{ color: "var(--text-5)" }} dir="rtl">
         بيانات الشكل القرآني: مشروع التنزيل (CC BY-ND 3.0). بيانات الصرف والجذور: مدوّنة القرآن العربي — Kais Dukes (GPL v3).{" "}
