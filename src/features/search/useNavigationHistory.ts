@@ -27,7 +27,18 @@ export function useNavigationHistory() {
     return last;
   }, [history]);
 
+  /**
+   * Jump back to a specific entry. Returns the snapshot to restore, after
+   * dropping that entry and everything newer than it from the stack.
+   */
+  const backTo = useCallback((index: number): NavSnapshot | null => {
+    if (index < 0 || index >= history.length) return null;
+    const target = history[index];
+    setHistory(h => h.slice(0, index));
+    return target;
+  }, [history]);
+
   const clear = useCallback(() => setHistory([]), []);
 
-  return { history, push, back, clear, depth: history.length };
+  return { history, push, back, backTo, clear, depth: history.length };
 }
