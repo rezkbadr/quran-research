@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Search, Tag, BookOpen, Filter, Bookmark, Loader2, ArrowRight, History } from "lucide-react";
 import { ROOT_GLOSS } from "./data/verses";
 import { Section } from "./components/Section";
@@ -34,6 +34,8 @@ function App() {
   const [activeRoot, setActiveRoot] = useState<string | null>(null);
 
   const pendingNavRef = useRef<{ verseId: string; wordIdx: number | null } | null>(null);
+  /** Set to true when a navigation should scroll the destination verse into view. */
+  const scrollOnSelectionRef = useRef(false);
 
   const history = useNavigationHistory();
 
@@ -53,6 +55,7 @@ function App() {
   const { userTags, userNotes, storageError, addTag, removeTag, setNote, tagsByFrequency } = useUserTagsAndNotes();
 
   const navigateToTarget = useCallback((target: RootReturnTarget) => {
+    scrollOnSelectionRef.current = true;
     if (target.surahId === selectedSurahId) {
       setSelectedId(target.verseId);
       if (target.wordIdx != null) setSelectedWord({ verseId: target.verseId, idx: target.wordIdx });
@@ -133,6 +136,17 @@ function App() {
     () => verses.find(v => v.id === selectedId) ?? null,
     [verses, selectedId],
   );
+
+  // After a navigation (search-result title click, back-nav restore, etc.)
+  // scroll the destination verse into view in its natural position within
+  // the sura. Plain verse-selection clicks don't set the flag, so they
+  // don't trigger a scroll.
+  useEffect(() => {
+    if (surahLoading || !selectedVerse || !scrollOnSelectionRef.current) return;
+    scrollOnSelectionRef.current = false;
+    const el = document.getElementById(`verse-${selectedVerse.id}`);
+    el?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [selectedVerse, surahLoading]);
 
   const selectedWordRoot = useMemo(() => {
     if (!selectedWord || !selectedVerse) return null;
