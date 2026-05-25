@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Search, Tag, BookOpen, Filter, Bookmark, Loader2, ArrowRight, History } from "lucide-react";
+import { Search, Tag, BookOpen, Filter, Bookmark, Loader2 } from "lucide-react";
 import { ROOT_GLOSS } from "./data/verses";
 import { Section } from "./components/Section";
 import { Chip } from "./components/Chip";
@@ -8,6 +8,7 @@ import { ThemeToggle } from "./features/theme/ThemeToggle";
 import { useTheme } from "./features/theme/useTheme";
 import { Breadcrumb } from "./features/navigation/Breadcrumb";
 import { ScrollToTopButton } from "./features/navigation/ScrollToTopButton";
+import { NavigationPanel } from "./features/navigation/NavigationPanel";
 import { useScrollPastThreshold } from "./features/navigation/useScrollState";
 import { VerseCard } from "./features/verses/VerseCard";
 import { DetailPanel } from "./features/verses/DetailPanel";
@@ -109,11 +110,25 @@ function App() {
     }
   }, [navigateToTarget, selectedSurahId]);
 
-  const goBackTo = useCallback((index: number) => {
-    const snap = history.backTo(index);
-    if (!snap) return;
-    restoreSnapshot(snap);
-  }, [history, restoreSnapshot]);
+  const goBack = useCallback(() => {
+    const snap = history.goBack(currentSnapshot());
+    if (snap) restoreSnapshot(snap);
+  }, [history, currentSnapshot, restoreSnapshot]);
+
+  const goForward = useCallback(() => {
+    const snap = history.goForward(currentSnapshot());
+    if (snap) restoreSnapshot(snap);
+  }, [history, currentSnapshot, restoreSnapshot]);
+
+  const jumpBack = useCallback((index: number) => {
+    const snap = history.goBackTo(index, currentSnapshot());
+    if (snap) restoreSnapshot(snap);
+  }, [history, currentSnapshot, restoreSnapshot]);
+
+  const jumpForward = useCallback((index: number) => {
+    const snap = history.goForwardTo(index, currentSnapshot());
+    if (snap) restoreSnapshot(snap);
+  }, [history, currentSnapshot, restoreSnapshot]);
 
   // When the user picks a different surah from the sidebar, reset transient view state.
   const changeSurah = useCallback((id: number) => {
@@ -284,38 +299,6 @@ function App() {
             )}
           </Section>
 
-          {history.depth > 0 && (
-            <Section title="المسار" icon={<History size={14} />} count={history.depth}>
-              <div className="space-y-1">
-                {history.history.map((snap, i) => {
-                  const label = snap.activeRoot && snap.verseId
-                    ? `الجذر ${snap.activeRoot} · ${snap.verseId}`
-                    : snap.activeRoot
-                      ? `الجذر ${snap.activeRoot}`
-                      : snap.verseId
-                        ? `الآية ${snap.verseId}`
-                        : `سورة ${snap.surahId}`;
-                  return (
-                    <button
-                      key={i}
-                      onClick={() => goBackTo(i)}
-                      className="w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-sm transition-colors text-xs"
-                      style={{ background: "transparent", color: "var(--text-2)", border: "1px solid var(--border)" }}
-                      onMouseEnter={e => { e.currentTarget.style.background = "var(--bg-muted)"; }}
-                      onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
-                      dir="rtl"
-                      title={`الرجوع إلى ${label}`}
-                    >
-                      <ArrowRight size={11} strokeWidth={1.75} style={{ color: "var(--text-4)" }} />
-                      <span className="flex-1 text-right" dir="rtl">{label}</span>
-                      <span className="font-mono opacity-60" style={{ minWidth: 16 }}>{i + 1}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </Section>
-          )}
-
           {(selectedWordRoot || queryRoots.length > 0) && (
             <Section title="الجذور" icon={<Bookmark size={14} />} count={selectedWordRoot ? undefined : queryRoots.length}>
               {selectedWordRoot && (
@@ -462,6 +445,17 @@ function App() {
       />
 
       <ScrollToTopButton visible={scrolled} />
+
+      <NavigationPanel
+        backStack={history.backStack}
+        fwdStack={history.fwdStack}
+        canBack={history.canBack}
+        canForward={history.canForward}
+        onBack={goBack}
+        onForward={goForward}
+        onJumpBack={jumpBack}
+        onJumpForward={jumpForward}
+      />
 
       <footer className="max-w-[1400px] mx-auto px-6 py-8 text-xs" style={{ color: "var(--text-5)" }} dir="rtl">
         بيانات الشكل القرآني: مشروع التنزيل (CC BY-ND 3.0). بيانات الصرف والجذور: مدوّنة القرآن العربي — Kais Dukes (GPL v3).{" "}
