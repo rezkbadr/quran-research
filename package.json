@@ -10,6 +10,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "check": "tsc -b && eslint . && vitest run",
     "preview": "vite preview"
   },
   "dependencies": {
