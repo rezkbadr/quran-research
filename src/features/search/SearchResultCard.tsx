@@ -7,9 +7,10 @@ interface Props {
   isSelected: boolean;
   onSelect: () => void;
   onWordSelect: (wordIdx: number) => void;
+  fontSize: number;
 }
 
-export function SearchResultCard({ entry, activeRoot, isSelected, onSelect, onWordSelect }: Props) {
+export function SearchResultCard({ entry, activeRoot, isSelected, onSelect, onWordSelect, fontSize }: Props) {
   const tokens = entry.arabic.split(" ");
 
   return (
@@ -42,7 +43,7 @@ export function SearchResultCard({ entry, activeRoot, isSelected, onSelect, onWo
       <div
         className="px-5 py-5"
         dir="rtl"
-        style={{ fontFamily: "'Amiri', serif", fontSize: 28, lineHeight: 2, color: "var(--text)", textAlign: "right" }}
+        style={{ fontFamily: "'Amiri', serif", fontSize, lineHeight: 2, color: "var(--text)", textAlign: "right" }}
       >
         {tokens.map((tok, i) => {
           const isMatch = activeRoot != null && entry.wordRoots[i] === activeRoot;
