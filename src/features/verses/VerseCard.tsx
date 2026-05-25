@@ -25,6 +25,7 @@ export function VerseCard({
 
   return (
     <article
+      id={`verse-${verse.id}`}
       onClick={onSelect}
       className="rounded-sm cursor-pointer transition-all"
       style={{
