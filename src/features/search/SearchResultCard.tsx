@@ -59,23 +59,6 @@ export function SearchResultCard({ entry, activeRoot, isSelected, onSelect, onWo
         })}
       </div>
 
-      {entry.roots.length > 0 && (
-        <div className="px-5 pb-4 flex flex-wrap gap-1.5" dir="rtl">
-          {entry.roots.map(r => (
-            <span
-              key={r}
-              className="px-2 py-0.5 rounded-sm text-xs"
-              style={{
-                background: activeRoot === r ? "rgb(var(--accent-rgb) / 0.18)" : "transparent",
-                border: "1px solid " + (activeRoot === r ? "var(--accent)" : "var(--border)"),
-                color: "var(--text-2)",
-              }}
-            >
-              <span dir="rtl" style={{ fontFamily: "'Amiri', serif", fontSize: 13, fontWeight: 600 }}>{r}</span>
-            </span>
-          ))}
-        </div>
-      )}
     </article>
   );
 }
