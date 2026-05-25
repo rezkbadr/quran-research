@@ -15,7 +15,7 @@ import { useSurahData, useSurahIndexes } from "./features/verses/useSurahData";
 import { SearchResultCard } from "./features/search/SearchResultCard";
 import { useGlobalSearch } from "./features/search/useGlobalSearch";
 import { useQueryRoots } from "./features/search/useQueryRoots";
-import { useRootNavigation } from "./features/search/useRootNavigation";
+import { useNavigationHistory, type NavSnapshot } from "./features/search/useNavigationHistory";
 import type { SearchEntry, RootReturnTarget } from "./features/search/types";
 import { useUserTagsAndNotes } from "./features/tags/useUserTagsAndNotes";
 
@@ -28,8 +28,11 @@ function App() {
   const [selectedWord, setSelectedWord] = useState<{ verseId: string; idx: number } | null>(null);
   const [query, setQuery] = useState("");
   const [activeTags, setActiveTags] = useState<string[]>([]);
+  const [activeRoot, setActiveRoot] = useState<string | null>(null);
 
   const pendingNavRef = useRef<{ verseId: string; wordIdx: number | null } | null>(null);
+
+  const history = useNavigationHistory();
 
   const { surahIndex, searchIndex } = useSurahIndexes();
   const { surahData, loading: surahLoading } = useSurahData(selectedSurahId, {
@@ -56,23 +59,57 @@ function App() {
     }
   }, [selectedSurahId]);
 
-  const clearWordSelection = useCallback(() => setSelectedWord(null), []);
+  /** Snapshot of the current view, used to push to navigation history. */
+  const currentSnapshot = useCallback((override?: Partial<NavSnapshot>): NavSnapshot => ({
+    activeRoot,
+    surahId: selectedSurahId,
+    verseId: selectedId,
+    wordIdx: selectedWord?.idx ?? null,
+    ...override,
+  }), [activeRoot, selectedSurahId, selectedId, selectedWord]);
 
-  const { activeRoot, returnTo: rootReturnTo, selectRoot, clearRoot, returnFromRoot } = useRootNavigation({
-    onClearWordSelection: clearWordSelection,
-    onNavigateToTarget: navigateToTarget,
-  });
+  const selectRoot = useCallback((root: string, from?: RootReturnTarget) => {
+    // Push the state we're leaving so back-nav can restore it. When the click
+    // carries a `from` (root pill on a verse, word-inspector root), record that
+    // as the source verse/word — it may differ from the currently selected one.
+    history.push(currentSnapshot(from && {
+      surahId: from.surahId,
+      verseId: from.verseId,
+      wordIdx: from.wordIdx,
+    }));
+    setActiveRoot(root);
+    setSelectedWord(null);
+  }, [history, currentSnapshot]);
+
+  const clearRoot = useCallback(() => {
+    setActiveRoot(null);
+    history.clear();
+  }, [history]);
+
+  const goBack = useCallback(() => {
+    const snap = history.back();
+    if (!snap) { setActiveRoot(null); return; }
+    setActiveRoot(snap.activeRoot);
+    if (snap.verseId != null) {
+      navigateToTarget({ surahId: snap.surahId, verseId: snap.verseId, wordIdx: snap.wordIdx });
+    } else if (snap.surahId !== selectedSurahId) {
+      pendingNavRef.current = null;
+      setSelectedId(null);
+      setSelectedWord(null);
+      setSelectedSurahId(snap.surahId);
+    }
+  }, [history, navigateToTarget, selectedSurahId]);
 
   // When the user picks a different surah from the sidebar, reset transient view state.
-  // (Surah change driven by navigateToTarget already targets a specific verse, so it skips this.)
   const changeSurah = useCallback((id: number) => {
     if (id === selectedSurahId) return;
     pendingNavRef.current = null;
     setSelectedId(null);
     setSelectedWord(null);
-    clearRoot();
+    setActiveRoot(null);
+    history.clear();
     setSelectedSurahId(id);
-  }, [selectedSurahId, clearRoot]);
+  }, [selectedSurahId, history]);
 
   const { globalResults, filtered } = useGlobalSearch({
     query,
@@ -107,8 +144,15 @@ function App() {
   }, [clearRoot]);
 
   const navigateToVerse = useCallback((entry: SearchEntry) => {
+    // Clicking a result while we're in search-or-root mode is a navigation
+    // step: push the current view so the back button can return to the result
+    // list, then enter browse mode of the target verse.
+    if (activeRoot || query.trim()) {
+      history.push(currentSnapshot());
+      setActiveRoot(null);
+    }
     navigateToTarget({ surahId: entry.surah, verseId: entry.id, wordIdx: null });
-  }, [navigateToTarget]);
+  }, [activeRoot, query, history, currentSnapshot, navigateToTarget]);
 
   const breadcrumbMode: "browse" | "search" | "root" | null = query.trim() && globalResults
     ? "search"
@@ -206,20 +250,33 @@ function App() {
                 </Chip>
               </div>
             )}
-            {rootReturnTo && (
-              <button
-                onClick={returnFromRoot}
-                className="mt-2 inline-flex items-center gap-1.5 px-2 py-1 rounded-sm text-xs transition-colors"
-                style={{ background: "var(--bg-muted)", color: "var(--text-2)", border: "1px solid var(--border)" }}
-                onMouseEnter={e => { e.currentTarget.style.background = "rgb(var(--accent-rgb) / 0.12)"; }}
-                onMouseLeave={e => { e.currentTarget.style.background = "var(--bg-muted)"; }}
-                dir="rtl"
-                title={`العودة إلى ${rootReturnTo.verseId}`}
-              >
-                <ArrowRight size={12} strokeWidth={1.75} />
-                <span>الرجوع إلى الآية {rootReturnTo.verseId}</span>
-              </button>
-            )}
+            {history.depth > 0 && (() => {
+              const last = history.history[history.history.length - 1];
+              const label = last.activeRoot && last.verseId
+                ? `الرجوع إلى الجذر ${last.activeRoot} (${last.verseId})`
+                : last.activeRoot
+                  ? `الرجوع إلى الجذر ${last.activeRoot}`
+                  : last.verseId
+                    ? `الرجوع إلى الآية ${last.verseId}`
+                    : "الرجوع";
+              return (
+                <button
+                  onClick={goBack}
+                  className="mt-2 inline-flex items-center gap-1.5 px-2 py-1 rounded-sm text-xs transition-colors"
+                  style={{ background: "var(--bg-muted)", color: "var(--text-2)", border: "1px solid var(--border)" }}
+                  onMouseEnter={e => { e.currentTarget.style.background = "rgb(var(--accent-rgb) / 0.12)"; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = "var(--bg-muted)"; }}
+                  dir="rtl"
+                  title={label}
+                >
+                  <ArrowRight size={12} strokeWidth={1.75} />
+                  <span>{label}</span>
+                  {history.depth > 1 && (
+                    <span className="opacity-70">· {history.depth}</span>
+                  )}
+                </button>
+              );
+            })()}
           </Section>
 
           {(selectedWordRoot || queryRoots.length > 0) && (
