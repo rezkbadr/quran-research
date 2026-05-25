@@ -172,6 +172,31 @@ function App() {
 
   const selectedVerse = useMemo(() => verses.find(v => v.id === selectedId) ?? null, [verses, selectedId]);
 
+  const selectedWordRoot = useMemo(() => {
+    if (!selectedWord || !selectedVerse) return null;
+    return selectedVerse.words[selectedWord.idx]?.root ?? null;
+  }, [selectedWord, selectedVerse]);
+
+  const queryRoots = useMemo(() => {
+    const q = query.trim();
+    if (q.length < 2 || !searchIndex.length) return [];
+    const terms = q.split(/\s+/).map(t => norm(t)).filter(t => t.length >= 2);
+    if (!terms.length) return [];
+    const counts: Record<string, number> = {};
+    for (const e of searchIndex) {
+      const tokens = e.arabic.split(" ");
+      for (let i = 0; i < tokens.length; i++) {
+        const root = e.wordRoots[i];
+        if (!root) continue;
+        const w = norm(tokens[i]);
+        if (terms.some(t => w.includes(t))) {
+          counts[root] = (counts[root] || 0) + 1;
+        }
+      }
+    }
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 12);
+  }, [query, searchIndex]);
+
   const addTag = (verseId: string, tag: string) => { const t = tag.trim(); if (!t) return; setUserTags(p => { const c = p[verseId] || []; if (c.includes(t)) return p; return { ...p, [verseId]: [...c, t] }; }); };
   const removeTag = (verseId: string, tag: string) => { setUserTags(p => { const c = (p[verseId] || []).filter(x => x !== tag); const n = { ...p }; if (c.length) n[verseId] = c; else delete n[verseId]; return n; }); };
   const setNote = (verseId: string, note: string) => { setUserNotes(p => { const n = { ...p }; if (note.trim()) n[verseId] = note; else delete n[verseId]; return n; }); };
@@ -303,6 +328,48 @@ function App() {
               </button>
             )}
           </Section>
+
+          {/* Discovered roots: from selected word or from search keywords */}
+          {(selectedWordRoot || queryRoots.length > 0) && (
+            <Section title="الجذور" icon={<Bookmark size={14} />} count={selectedWordRoot ? undefined : queryRoots.length}>
+              {selectedWordRoot && (
+                <div className="mb-2">
+                  <div className="text-xs mb-1.5" style={{ color: "var(--text-4)" }} dir="rtl">جذر الكلمة المحددة</div>
+                  <button
+                    onClick={() => handleRootClick(selectedWordRoot, selectedVerse ? { surahId: selectedVerse.surah, verseId: selectedVerse.id, wordIdx: selectedWord?.idx ?? null } : undefined)}
+                    className="w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-sm transition-colors"
+                    style={{ background: activeRoot === selectedWordRoot ? "var(--accent)" : "rgb(var(--accent-rgb) / 0.1)", color: activeRoot === selectedWordRoot ? "var(--bg)" : "var(--text-2)", border: "1px solid " + (activeRoot === selectedWordRoot ? "var(--accent)" : "rgb(var(--accent-rgb) / 0.3)") }}
+                    dir="rtl"
+                  >
+                    <span className="text-xs italic" style={{ opacity: 0.85 }}>{ROOT_GLOSS[selectedWordRoot]?.split("،")[0] ?? ""}</span>
+                    <span dir="rtl" style={{ fontFamily: "'Amiri', serif", fontSize: 18, fontWeight: 600 }}>{selectedWordRoot}</span>
+                  </button>
+                </div>
+              )}
+              {queryRoots.length > 0 && (
+                <div>
+                  {selectedWordRoot && <div className="text-xs mb-1.5 mt-2" style={{ color: "var(--text-4)" }} dir="rtl">جذور كلمات البحث</div>}
+                  <div className="space-y-1 max-h-[260px] overflow-y-auto pr-1 custom-scroll">
+                    {queryRoots.map(([r, c]) => (
+                      <button key={r} onClick={() => handleRootClick(r)}
+                        className="w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-sm transition-colors"
+                        style={{ background: activeRoot === r ? "var(--accent)" : "transparent", color: activeRoot === r ? "var(--bg)" : "var(--text-2)" }}
+                        onMouseEnter={e => { if (activeRoot !== r) e.currentTarget.style.background = "var(--bg-muted)"; }}
+                        onMouseLeave={e => { if (activeRoot !== r) e.currentTarget.style.background = "transparent"; }}
+                        dir="rtl"
+                      >
+                        <span className="flex items-center gap-2 text-xs" style={{ opacity: 0.8 }}>
+                          <span>{c}</span>
+                          <span className="italic" style={{ fontSize: 11 }}>{ROOT_GLOSS[r]?.split("،")[0] ?? ""}</span>
+                        </span>
+                        <span dir="rtl" style={{ fontFamily: "'Amiri', serif", fontSize: 18, fontWeight: 600 }}>{r}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </Section>
+          )}
 
           {/* Tags */}
           <Section title="وسوماتك" icon={<Tag size={14} />} count={allTags.length}>
