@@ -12,10 +12,11 @@ interface Props {
   onWordClick: (idx: number) => void;
   selectedWordIdx: number | null;
   activeRoot: string | null;
+  fontSize: number;
 }
 
 export function VerseCard({
-  verse, tags, hasNote, isSelected, onSelect, onWordClick, selectedWordIdx, activeRoot,
+  verse, tags, hasNote, isSelected, onSelect, onWordClick, selectedWordIdx, activeRoot, fontSize,
 }: Props) {
   return (
     <article
@@ -43,7 +44,7 @@ export function VerseCard({
         </div>
       </div>
 
-      <div className="px-5 py-6" dir="rtl" style={{ fontFamily: "'Amiri', serif", fontSize: 32, lineHeight: 2, color: "var(--text)", textAlign: "right" }}>
+      <div className="px-5 py-6" dir="rtl" style={{ fontFamily: "'Amiri', serif", fontSize, lineHeight: 2, color: "var(--text)", textAlign: "right" }}>
         {verse.words.map((w, i) => {
           const isRootMatch = activeRoot && w.root === activeRoot;
           const isSel = isSelected && selectedWordIdx === i;

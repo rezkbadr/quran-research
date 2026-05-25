@@ -12,6 +12,8 @@ import { useScrollPastThreshold } from "./features/navigation/useScrollState";
 import { VerseCard } from "./features/verses/VerseCard";
 import { DetailPanel } from "./features/verses/DetailPanel";
 import { useSurahData, useSurahIndexes } from "./features/verses/useSurahData";
+import { useVerseFontSize } from "./features/verses/useVerseFontSize";
+import { VerseFontSizeControl } from "./features/verses/VerseFontSizeControl";
 import { SearchResultCard } from "./features/search/SearchResultCard";
 import { useGlobalSearch } from "./features/search/useGlobalSearch";
 import { useQueryRoots } from "./features/search/useQueryRoots";
@@ -25,6 +27,8 @@ import { shortScrollIntoView } from "./lib/scroll";
 function App() {
   const { theme, toggle: toggleTheme } = useTheme();
   const scrolled = useScrollPastThreshold();
+  const verseFont = useVerseFontSize();
+  const resultFontSize = Math.round(verseFont.size * 0.875);
 
   const [selectedSurahId, setSelectedSurahId] = useState<number>(1);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -226,6 +230,12 @@ function App() {
             <span>{globalResults ? `${searchIndex.length} آية` : `${verses.length} آية`}</span>
           </div>
 
+          <VerseFontSizeControl
+            onDecrease={verseFont.decrease}
+            onIncrease={verseFont.increase}
+            canDecrease={verseFont.canDecrease}
+            canIncrease={verseFont.canIncrease}
+          />
           <ThemeToggle theme={theme} onToggle={toggleTheme} />
         </div>
         {storageError && (
@@ -393,6 +403,7 @@ function App() {
                   isSelected={selectedId === e.id}
                   onSelect={() => navigateToVerse(e)}
                   onWordSelect={idx => navigateToVerse(e, idx)}
+                  fontSize={resultFontSize}
                 />
               ))
             )
@@ -417,6 +428,7 @@ function App() {
                 onWordClick={idx => { setSelectedId(v.id); setSelectedWord({ verseId: v.id, idx }); }}
                 selectedWordIdx={selectedWord?.verseId === v.id ? selectedWord.idx : null}
                 activeRoot={activeRoot}
+                fontSize={verseFont.size}
               />
             ))
           )}
