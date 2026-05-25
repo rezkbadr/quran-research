@@ -2,7 +2,6 @@ import { FileText } from "lucide-react";
 import type { Verse } from "../../types";
 import { Chip } from "../../components/Chip";
 import { CopyVerseButtons } from "./CopyVerseButtons";
-import type { RootReturnTarget } from "../search/types";
 
 interface Props {
   verse: Verse;
@@ -13,16 +12,11 @@ interface Props {
   onWordClick: (idx: number) => void;
   selectedWordIdx: number | null;
   activeRoot: string | null;
-  onRootClick: (root: string, from?: RootReturnTarget) => void;
 }
 
 export function VerseCard({
-  verse, tags, hasNote, isSelected, onSelect, onWordClick, selectedWordIdx, activeRoot, onRootClick,
+  verse, tags, hasNote, isSelected, onSelect, onWordClick, selectedWordIdx, activeRoot,
 }: Props) {
-  const uniqueRoots = Array.from(
-    new Set(verse.words.map((w) => w.root).filter((r): r is string => r !== null))
-  );
-
   return (
     <article
       id={`verse-${verse.id}`}
@@ -65,24 +59,6 @@ export function VerseCard({
             </span>
           );
         })}
-      </div>
-
-      <div className="px-5 pb-4 flex flex-wrap gap-1.5" dir="rtl">
-        {uniqueRoots.map((r) => (
-          <button
-            key={r}
-            onClick={(e) => { e.stopPropagation(); onRootClick(r, { surahId: verse.surah, verseId: verse.id, wordIdx: null }); }}
-            className="px-2 py-0.5 rounded-sm text-xs transition-colors"
-            style={{
-              background: activeRoot === r ? "rgb(var(--accent-rgb) / 0.18)" : "transparent",
-              border: "1px solid " + (activeRoot === r ? "var(--accent)" : "var(--border)"),
-              color: "var(--text-2)",
-              cursor: "pointer",
-            }}
-          >
-            <span dir="rtl" style={{ fontFamily: "'Amiri', serif", fontSize: 14, fontWeight: 600 }}>{r}</span>
-          </button>
-        ))}
       </div>
     </article>
   );

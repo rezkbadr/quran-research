@@ -432,7 +432,6 @@ function App() {
                 onWordClick={idx => { setSelectedId(v.id); setSelectedWord({ verseId: v.id, idx }); }}
                 selectedWordIdx={selectedWord?.verseId === v.id ? selectedWord.idx : null}
                 activeRoot={activeRoot}
-                onRootClick={selectRoot}
               />
             ))
           )}
