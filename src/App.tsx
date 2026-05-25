@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from "react";
-import { Search, Tag, BookOpen, Filter, Bookmark, Loader2, ArrowRight } from "lucide-react";
+import { Search, Tag, BookOpen, Filter, Bookmark, Loader2, ArrowRight, History } from "lucide-react";
 import { ROOT_GLOSS } from "./data/verses";
 import { Section } from "./components/Section";
 import { Chip } from "./components/Chip";
@@ -86,9 +86,7 @@ function App() {
     history.clear();
   }, [history]);
 
-  const goBack = useCallback(() => {
-    const snap = history.back();
-    if (!snap) { setActiveRoot(null); return; }
+  const restoreSnapshot = useCallback((snap: NavSnapshot) => {
     setActiveRoot(snap.activeRoot);
     if (snap.verseId != null) {
       navigateToTarget({ surahId: snap.surahId, verseId: snap.verseId, wordIdx: snap.wordIdx });
@@ -98,7 +96,13 @@ function App() {
       setSelectedWord(null);
       setSelectedSurahId(snap.surahId);
     }
-  }, [history, navigateToTarget, selectedSurahId]);
+  }, [navigateToTarget, selectedSurahId]);
+
+  const goBackTo = useCallback((index: number) => {
+    const snap = history.backTo(index);
+    if (!snap) return;
+    restoreSnapshot(snap);
+  }, [history, restoreSnapshot]);
 
   // When the user picks a different surah from the sidebar, reset transient view state.
   const changeSurah = useCallback((id: number) => {
@@ -250,34 +254,39 @@ function App() {
                 </Chip>
               </div>
             )}
-            {history.depth > 0 && (() => {
-              const last = history.history[history.history.length - 1];
-              const label = last.activeRoot && last.verseId
-                ? `الرجوع إلى الجذر ${last.activeRoot} (${last.verseId})`
-                : last.activeRoot
-                  ? `الرجوع إلى الجذر ${last.activeRoot}`
-                  : last.verseId
-                    ? `الرجوع إلى الآية ${last.verseId}`
-                    : "الرجوع";
-              return (
-                <button
-                  onClick={goBack}
-                  className="mt-2 inline-flex items-center gap-1.5 px-2 py-1 rounded-sm text-xs transition-colors"
-                  style={{ background: "var(--bg-muted)", color: "var(--text-2)", border: "1px solid var(--border)" }}
-                  onMouseEnter={e => { e.currentTarget.style.background = "rgb(var(--accent-rgb) / 0.12)"; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = "var(--bg-muted)"; }}
-                  dir="rtl"
-                  title={label}
-                >
-                  <ArrowRight size={12} strokeWidth={1.75} />
-                  <span>{label}</span>
-                  {history.depth > 1 && (
-                    <span className="opacity-70">· {history.depth}</span>
-                  )}
-                </button>
-              );
-            })()}
           </Section>
+
+          {history.depth > 0 && (
+            <Section title="المسار" icon={<History size={14} />} count={history.depth}>
+              <div className="space-y-1">
+                {history.history.map((snap, i) => {
+                  const label = snap.activeRoot && snap.verseId
+                    ? `الجذر ${snap.activeRoot} · ${snap.verseId}`
+                    : snap.activeRoot
+                      ? `الجذر ${snap.activeRoot}`
+                      : snap.verseId
+                        ? `الآية ${snap.verseId}`
+                        : `سورة ${snap.surahId}`;
+                  return (
+                    <button
+                      key={i}
+                      onClick={() => goBackTo(i)}
+                      className="w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-sm transition-colors text-xs"
+                      style={{ background: "transparent", color: "var(--text-2)", border: "1px solid var(--border)" }}
+                      onMouseEnter={e => { e.currentTarget.style.background = "var(--bg-muted)"; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
+                      dir="rtl"
+                      title={`الرجوع إلى ${label}`}
+                    >
+                      <ArrowRight size={11} strokeWidth={1.75} style={{ color: "var(--text-4)" }} />
+                      <span className="flex-1 text-right" dir="rtl">{label}</span>
+                      <span className="font-mono opacity-60" style={{ minWidth: 16 }}>{i + 1}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </Section>
+          )}
 
           {(selectedWordRoot || queryRoots.length > 0) && (
             <Section title="الجذور" icon={<Bookmark size={14} />} count={selectedWordRoot ? undefined : queryRoots.length}>
