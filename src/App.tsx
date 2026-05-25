@@ -1,244 +1,114 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Search, Tag, BookOpen, Filter, Bookmark, Loader2, ArrowRight } from "lucide-react";
-import type { SurahMeta, SurahData } from "./types";
 import { ROOT_GLOSS } from "./data/verses";
-import { norm } from "./data/helpers";
-import { STORAGE_KEYS, DATA_URLS, SCROLL_TRIGGER_PX, QUERY_ROOTS_LIMIT } from "./lib/constants";
-import { loadJSON, saveJSON, loadString, saveString } from "./lib/storage";
 import { Section } from "./components/Section";
 import { Chip } from "./components/Chip";
 import { FontStyles } from "./components/FontStyles";
-import { ThemeToggle, type Theme } from "./features/theme/ThemeToggle";
+import { ThemeToggle } from "./features/theme/ThemeToggle";
+import { useTheme } from "./features/theme/useTheme";
 import { Breadcrumb } from "./features/navigation/Breadcrumb";
 import { ScrollToTopButton } from "./features/navigation/ScrollToTopButton";
+import { useScrollPastThreshold } from "./features/navigation/useScrollState";
 import { VerseCard } from "./features/verses/VerseCard";
 import { DetailPanel } from "./features/verses/DetailPanel";
+import { useSurahData, useSurahIndexes } from "./features/verses/useSurahData";
 import { SearchResultCard } from "./features/search/SearchResultCard";
+import { useGlobalSearch } from "./features/search/useGlobalSearch";
+import { useQueryRoots } from "./features/search/useQueryRoots";
+import { useRootNavigation } from "./features/search/useRootNavigation";
 import type { SearchEntry, RootReturnTarget } from "./features/search/types";
+import { useUserTagsAndNotes } from "./features/tags/useUserTagsAndNotes";
 
 function App() {
-  const [searchIndex, setSearchIndex] = useState<SearchEntry[]>([]);
-  const [surahIndex, setSurahIndex] = useState<SurahMeta[]>([]);
+  const { theme, toggle: toggleTheme } = useTheme();
+  const scrolled = useScrollPastThreshold();
+
   const [selectedSurahId, setSelectedSurahId] = useState<number>(1);
-  const [surahData, setSurahData] = useState<SurahData | null>(null);
-  const [surahLoading, setSurahLoading] = useState(false);
-  const pendingNavRef = useRef<{ verseId: string; wordIdx: number | null } | null>(null);
-
-  const [userTags, setUserTags] = useState<Record<string, string[]>>({});
-  const [userNotes, setUserNotes] = useState<Record<string, string>>({});
-  const [storageReady, setStorageReady] = useState(false);
-  const [storageError, setStorageError] = useState<string | null>(null);
-
-  const [query, setQuery] = useState("");
-  const [activeTags, setActiveTags] = useState<string[]>([]);
-  const [activeRoot, setActiveRoot] = useState<string | null>(null);
-  const [rootReturnTo, setRootReturnTo] = useState<RootReturnTarget | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedWord, setSelectedWord] = useState<{ verseId: string; idx: number } | null>(null);
+  const [query, setQuery] = useState("");
+  const [activeTags, setActiveTags] = useState<string[]>([]);
 
-  const [theme, setTheme] = useState<Theme>(() => {
-    if (typeof window === "undefined") return "light";
-    const stored = window.localStorage?.getItem(STORAGE_KEYS.theme);
-    if (stored === "light" || stored === "dark") return stored;
-    return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  const pendingNavRef = useRef<{ verseId: string; wordIdx: number | null } | null>(null);
+
+  const { surahIndex, searchIndex } = useSurahIndexes();
+  const { surahData, loading: surahLoading } = useSurahData(selectedSurahId, {
+    onLoaded: () => {
+      const nav = pendingNavRef.current;
+      if (!nav) return;
+      setSelectedId(nav.verseId);
+      if (nav.wordIdx != null) setSelectedWord({ verseId: nav.verseId, idx: nav.wordIdx });
+      pendingNavRef.current = null;
+    },
   });
-
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    saveString(STORAGE_KEYS.theme, theme);
-  }, [theme]);
-
-  useEffect(() => {
-    (async () => {
-      const t = await loadString(STORAGE_KEYS.theme);
-      if (t === "light" || t === "dark") setTheme(t);
-    })();
-  }, []);
-
-  const [scrolled, setScrolled] = useState(false);
-  useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > SCROLL_TRIGGER_PX);
-    onScroll();
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-  }, []);
-
-  useEffect(() => {
-    fetch(DATA_URLS.surahIndex).then(r => r.json()).then(setSurahIndex).catch(() => {});
-    fetch(DATA_URLS.searchIndex).then(r => r.json()).then(setSearchIndex).catch(() => {});
-  }, []);
-
-  // Sync transient view state with the externally driven surah fetch.
-  /* eslint-disable react-hooks/set-state-in-effect */
-  useEffect(() => {
-    setSurahLoading(true);
-    setSurahData(null);
-    setSelectedId(null);
-    setSelectedWord(null);
-    setActiveRoot(null);
-    setRootReturnTo(null);
-    fetch(DATA_URLS.surah(selectedSurahId))
-      .then(r => r.json())
-      .then((d: SurahData) => {
-        setSurahData(d);
-        setSurahLoading(false);
-        const nav = pendingNavRef.current;
-        if (nav) {
-          setSelectedId(nav.verseId);
-          if (nav.wordIdx != null) setSelectedWord({ verseId: nav.verseId, idx: nav.wordIdx });
-          pendingNavRef.current = null;
-        }
-      })
-      .catch(() => setSurahLoading(false));
-  }, [selectedSurahId]);
-  /* eslint-enable react-hooks/set-state-in-effect */
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const [tags, notes] = await Promise.all([
-          loadJSON<Record<string, string[]>>(STORAGE_KEYS.tags, {}),
-          loadJSON<Record<string, string>>(STORAGE_KEYS.notes, {}),
-        ]);
-        setUserTags(tags);
-        setUserNotes(notes);
-      } catch {
-        setStorageError("التخزين غير متاح؛ ستبقى الوسوم والملاحظات فقط طوال هذه الجلسة.");
-      } finally {
-        setStorageReady(true);
-      }
-    })();
-  }, []);
-
-  useEffect(() => { if (storageReady) saveJSON(STORAGE_KEYS.tags, userTags); }, [userTags, storageReady]);
-  useEffect(() => { if (storageReady) saveJSON(STORAGE_KEYS.notes, userNotes); }, [userNotes, storageReady]);
 
   const verses = useMemo(() => surahData?.verses ?? [], [surahData]);
 
-  const allTags = useMemo(() => {
-    const counts: Record<string, number> = {};
-    Object.values(userTags).forEach(arr => arr.forEach(t => { counts[t] = (counts[t] || 0) + 1; }));
-    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
-  }, [userTags]);
+  const { userTags, userNotes, storageError, addTag, removeTag, setNote, tagsByFrequency } = useUserTagsAndNotes();
 
-  const globalResults = useMemo(() => {
-    const q = query.trim();
-    if (!searchIndex.length) return null;
-    if (q.length < 2 && !activeRoot) return null;
-    if (!q && activeRoot) return searchIndex.filter(e => e.roots.includes(activeRoot));
-    const refMatch = q.match(/^(\d+):(\d+)$/);
-    const terms = q.split(/\s+/).filter(Boolean);
-    const isMultiWord = terms.length > 1 && terms.every(t => t.length >= 2);
+  const navigateToTarget = useCallback((target: RootReturnTarget) => {
+    if (target.surahId === selectedSurahId) {
+      setSelectedId(target.verseId);
+      if (target.wordIdx != null) setSelectedWord({ verseId: target.verseId, idx: target.wordIdx });
+    } else {
+      pendingNavRef.current = { verseId: target.verseId, wordIdx: target.wordIdx };
+      setSelectedSurahId(target.surahId);
+    }
+  }, [selectedSurahId]);
 
-    return searchIndex.filter(e => {
-      if (refMatch) return e.surah === +refMatch[1] && e.ayah === +refMatch[2];
-      if (activeRoot && !e.roots.includes(activeRoot)) return false;
-      if (isMultiWord) {
-        return terms.every(t => {
-          const tn = norm(t);
-          return norm(e.arabic).includes(tn) || e.roots.some(r => r.includes(t));
-        });
-      }
-      return norm(e.arabic).includes(norm(q)) || e.roots.some(r => r.includes(q));
-    });
-  }, [query, searchIndex, activeRoot]);
+  const clearWordSelection = useCallback(() => setSelectedWord(null), []);
 
-  const filtered = useMemo(() => {
-    if (query.trim()) return [];
-    return verses.filter(v => {
-      if (activeRoot && !v.words.some(w => w.root === activeRoot)) return false;
-      if (activeTags.length) { const tags = userTags[v.id] || []; if (!activeTags.every(t => tags.includes(t))) return false; }
-      return true;
-    });
-  }, [verses, query, activeRoot, activeTags, userTags]);
+  const { activeRoot, returnTo: rootReturnTo, selectRoot, clearRoot, returnFromRoot } = useRootNavigation({
+    onClearWordSelection: clearWordSelection,
+    onNavigateToTarget: navigateToTarget,
+  });
 
-  const selectedVerse = useMemo(() => verses.find(v => v.id === selectedId) ?? null, [verses, selectedId]);
+  // When the user picks a different surah from the sidebar, reset transient view state.
+  // (Surah change driven by navigateToTarget already targets a specific verse, so it skips this.)
+  const changeSurah = useCallback((id: number) => {
+    if (id === selectedSurahId) return;
+    pendingNavRef.current = null;
+    setSelectedId(null);
+    setSelectedWord(null);
+    clearRoot();
+    setSelectedSurahId(id);
+  }, [selectedSurahId, clearRoot]);
+
+  const { globalResults, filtered } = useGlobalSearch({
+    query,
+    activeRoot,
+    searchIndex,
+    surahVerses: verses,
+    activeTags,
+    userTags,
+  });
+
+  const queryRoots = useQueryRoots(query, searchIndex);
+
+  const selectedVerse = useMemo(
+    () => verses.find(v => v.id === selectedId) ?? null,
+    [verses, selectedId],
+  );
 
   const selectedWordRoot = useMemo(() => {
     if (!selectedWord || !selectedVerse) return null;
     return selectedVerse.words[selectedWord.idx]?.root ?? null;
   }, [selectedWord, selectedVerse]);
 
-  const queryRoots = useMemo(() => {
-    const q = query.trim();
-    if (q.length < 2 || !searchIndex.length) return [];
-    const terms = q.split(/\s+/).map(t => norm(t)).filter(t => t.length >= 2);
-    if (!terms.length) return [];
-    const counts: Record<string, number> = {};
-    for (const e of searchIndex) {
-      const tokens = e.arabic.split(" ");
-      for (let i = 0; i < tokens.length; i++) {
-        const root = e.wordRoots[i];
-        if (!root) continue;
-        const w = norm(tokens[i]);
-        if (terms.some(t => w.includes(t))) counts[root] = (counts[root] || 0) + 1;
-      }
-    }
-    return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, QUERY_ROOTS_LIMIT);
-  }, [query, searchIndex]);
+  const toggleActiveTag = useCallback(
+    (t: string) => setActiveTags(c => c.includes(t) ? c.filter(x => x !== t) : [...c, t]),
+    [],
+  );
 
-  const addTag = (verseId: string, tag: string) => {
-    const t = tag.trim();
-    if (!t) return;
-    setUserTags(p => {
-      const c = p[verseId] || [];
-      if (c.includes(t)) return p;
-      return { ...p, [verseId]: [...c, t] };
-    });
-  };
-  const removeTag = (verseId: string, tag: string) => {
-    setUserTags(p => {
-      const c = (p[verseId] || []).filter(x => x !== tag);
-      const n = { ...p };
-      if (c.length) n[verseId] = c; else delete n[verseId];
-      return n;
-    });
-  };
-  const setNote = (verseId: string, note: string) => {
-    setUserNotes(p => {
-      const n = { ...p };
-      if (note.trim()) n[verseId] = note; else delete n[verseId];
-      return n;
-    });
-  };
-  const toggleActiveTag = (t: string) =>
-    setActiveTags(c => c.includes(t) ? c.filter(x => x !== t) : [...c, t]);
-
-  const handleRootClick = (root: string, from?: RootReturnTarget) => {
-    setActiveRoot(root);
-    setSelectedWord(null);
-    setRootReturnTo(from ?? null);
-  };
-
-  const returnFromRoot = () => {
-    if (!rootReturnTo) { setActiveRoot(null); return; }
-    const { surahId, verseId, wordIdx } = rootReturnTo;
-    setActiveRoot(null);
-    if (selectedSurahId === surahId) {
-      setSelectedId(verseId);
-      if (wordIdx != null) setSelectedWord({ verseId, idx: wordIdx });
-    } else {
-      pendingNavRef.current = { verseId, wordIdx };
-      setSelectedSurahId(surahId);
-    }
-    setRootReturnTo(null);
-  };
-
-  const clearFilters = () => {
+  const clearFilters = useCallback(() => {
     setQuery("");
     setActiveTags([]);
-    setActiveRoot(null);
-    setRootReturnTo(null);
-  };
+    clearRoot();
+  }, [clearRoot]);
 
-  const navigateToVerse = (entry: SearchEntry) => {
-    if (selectedSurahId === entry.surah) {
-      setSelectedId(entry.id);
-    } else {
-      pendingNavRef.current = { verseId: entry.id, wordIdx: null };
-      setSelectedSurahId(entry.surah);
-    }
-  };
+  const navigateToVerse = useCallback((entry: SearchEntry) => {
+    navigateToTarget({ surahId: entry.surah, verseId: entry.id, wordIdx: null });
+  }, [navigateToTarget]);
 
   const breadcrumbMode: "browse" | "search" | "root" | null = query.trim() && globalResults
     ? "search"
@@ -290,7 +160,7 @@ function App() {
             <span>{globalResults ? `${searchIndex.length} آية` : `${verses.length} آية`}</span>
           </div>
 
-          <ThemeToggle theme={theme} onToggle={() => setTheme(t => t === "dark" ? "light" : "dark")} />
+          <ThemeToggle theme={theme} onToggle={toggleTheme} />
         </div>
         {storageError && (
           <div className="max-w-[1400px] mx-auto px-6 pb-3 text-xs" style={{ color: "var(--warn)" }} dir="rtl">
@@ -306,7 +176,7 @@ function App() {
               {surahIndex.map(s => (
                 <button
                   key={s.id}
-                  onClick={() => setSelectedSurahId(s.id)}
+                  onClick={() => changeSurah(s.id)}
                   className="w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-sm transition-colors text-right"
                   style={{ background: selectedSurahId === s.id ? "var(--accent)" : "transparent", color: selectedSurahId === s.id ? "var(--bg)" : "var(--text-2)" }}
                   onMouseEnter={e => { if (selectedSurahId !== s.id) e.currentTarget.style.background = "var(--bg-muted)"; }}
@@ -331,7 +201,7 @@ function App() {
             {activeRoot && (
               <div className="mt-2 flex items-center gap-2 text-xs" dir="rtl">
                 <span style={{ color: "var(--text-4)" }}>الجذر:</span>
-                <Chip onRemove={() => { setActiveRoot(null); setRootReturnTo(null); }} variant="root">
+                <Chip onRemove={clearRoot} variant="root">
                   <span dir="rtl" style={{ fontFamily: "'Amiri', serif", fontSize: 14 }}>{activeRoot}</span>
                 </Chip>
               </div>
@@ -358,7 +228,7 @@ function App() {
                 <div className="mb-2">
                   <div className="text-xs mb-1.5" style={{ color: "var(--text-4)" }} dir="rtl">جذر الكلمة المحددة</div>
                   <button
-                    onClick={() => handleRootClick(
+                    onClick={() => selectRoot(
                       selectedWordRoot,
                       selectedVerse ? { surahId: selectedVerse.surah, verseId: selectedVerse.id, wordIdx: selectedWord?.idx ?? null } : undefined,
                     )}
@@ -382,7 +252,7 @@ function App() {
                     {queryRoots.map(([r, c]) => (
                       <button
                         key={r}
-                        onClick={() => handleRootClick(r)}
+                        onClick={() => selectRoot(r)}
                         className="w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-sm transition-colors"
                         style={{ background: activeRoot === r ? "var(--accent)" : "transparent", color: activeRoot === r ? "var(--bg)" : "var(--text-2)" }}
                         onMouseEnter={e => { if (activeRoot !== r) e.currentTarget.style.background = "var(--bg-muted)"; }}
@@ -402,12 +272,12 @@ function App() {
             </Section>
           )}
 
-          <Section title="وسوماتك" icon={<Tag size={14} />} count={allTags.length}>
-            {allTags.length === 0 ? (
+          <Section title="وسوماتك" icon={<Tag size={14} />} count={tagsByFrequency.length}>
+            {tagsByFrequency.length === 0 ? (
               <p className="text-xs italic" style={{ color: "var(--text-5)" }} dir="rtl">سمِّ آية لبناء تصنيفك.</p>
             ) : (
               <div className="flex flex-wrap gap-1.5">
-                {allTags.map(([t, c]) => (
+                {tagsByFrequency.map(([t, c]) => (
                   <button
                     key={t}
                     onClick={() => toggleActiveTag(t)}
@@ -462,7 +332,7 @@ function App() {
                 onWordClick={idx => { setSelectedId(v.id); setSelectedWord({ verseId: v.id, idx }); }}
                 selectedWordIdx={selectedWord?.verseId === v.id ? selectedWord.idx : null}
                 activeRoot={activeRoot}
-                onRootClick={handleRootClick}
+                onRootClick={selectRoot}
               />
             ))
           )}
@@ -474,11 +344,11 @@ function App() {
             wordSel={selectedWord}
             tags={selectedVerse ? (userTags[selectedVerse.id] || []) : []}
             note={selectedVerse ? (userNotes[selectedVerse.id] || "") : ""}
-            allTagSuggestions={allTags.map(([t]) => t)}
+            allTagSuggestions={tagsByFrequency.map(([t]) => t)}
             onAddTag={addTag}
             onRemoveTag={removeTag}
             onSetNote={setNote}
-            onRootClick={handleRootClick}
+            onRootClick={selectRoot}
             surahName={surahData?.name ?? ""}
           />
         </aside>
