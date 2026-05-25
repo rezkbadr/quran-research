@@ -143,15 +143,15 @@ function App() {
     clearRoot();
   }, [clearRoot]);
 
-  const navigateToVerse = useCallback((entry: SearchEntry) => {
-    // Clicking a result while we're in search-or-root mode is a navigation
-    // step: push the current view so the back button can return to the result
-    // list, then enter browse mode of the target verse.
+  const navigateToVerse = useCallback((entry: SearchEntry, wordIdx: number | null = null) => {
+    // Clicking a result (or a word inside one) while we're in search-or-root
+    // mode is a navigation step: push the current view so the back button can
+    // return to the result list, then enter browse mode of the target verse.
     if (activeRoot || query.trim()) {
       history.push(currentSnapshot());
       setActiveRoot(null);
     }
-    navigateToTarget({ surahId: entry.surah, verseId: entry.id, wordIdx: null });
+    navigateToTarget({ surahId: entry.surah, verseId: entry.id, wordIdx });
   }, [activeRoot, query, history, currentSnapshot, navigateToTarget]);
 
   const breadcrumbMode: "browse" | "search" | "root" | null = query.trim() && globalResults
@@ -365,6 +365,7 @@ function App() {
                   activeRoot={activeRoot}
                   isSelected={selectedId === e.id}
                   onSelect={() => navigateToVerse(e)}
+                  onWordSelect={idx => navigateToVerse(e, idx)}
                 />
               ))
             )

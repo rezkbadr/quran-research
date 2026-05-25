@@ -6,9 +6,10 @@ interface Props {
   activeRoot: string | null;
   isSelected: boolean;
   onSelect: () => void;
+  onWordSelect: (wordIdx: number) => void;
 }
 
-export function SearchResultCard({ entry, activeRoot, isSelected, onSelect }: Props) {
+export function SearchResultCard({ entry, activeRoot, isSelected, onSelect, onWordSelect }: Props) {
   const tokens = entry.arabic.split(" ");
 
   return (
@@ -42,7 +43,8 @@ export function SearchResultCard({ entry, activeRoot, isSelected, onSelect }: Pr
             <span
               key={i}
               className={"arabic-word" + (isMatch ? " is-root-match" : "")}
-              style={{ display: "inline-block", padding: "2px 6px", marginInline: 2, borderRadius: 2 }}
+              onClick={(e) => { e.stopPropagation(); onWordSelect(i); }}
+              style={{ display: "inline-block", padding: "2px 6px", marginInline: 2, borderRadius: 2, cursor: "pointer" }}
             >
               {tok}
             </span>
