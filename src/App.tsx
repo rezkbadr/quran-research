@@ -145,7 +145,23 @@ function App() {
     if (surahLoading || !selectedVerse || !scrollOnSelectionRef.current) return;
     scrollOnSelectionRef.current = false;
     const el = document.getElementById(`verse-${selectedVerse.id}`);
-    el?.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (!el) return;
+    // Centre the verse in the viewport. For long suras the verse can be
+    // far away, and smooth-scrolling the whole distance feels sluggish.
+    // Instant-jump close to the target, then smooth-scroll the last
+    // ~300px so the animation stays the same length regardless of how
+    // deep in the sura we're going.
+    const SHORT_ANIMATION_PX = 300;
+    const rect = el.getBoundingClientRect();
+    const target = rect.top + window.scrollY - window.innerHeight / 2 + rect.height / 2;
+    const distance = target - window.scrollY;
+    if (Math.abs(distance) > SHORT_ANIMATION_PX) {
+      const sign = distance > 0 ? 1 : -1;
+      window.scrollTo({ top: target - sign * SHORT_ANIMATION_PX, behavior: "auto" });
+      requestAnimationFrame(() => window.scrollTo({ top: target, behavior: "smooth" }));
+    } else {
+      window.scrollTo({ top: target, behavior: "smooth" });
+    }
   }, [selectedVerse, surahLoading]);
 
   const selectedWordRoot = useMemo(() => {
