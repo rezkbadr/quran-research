@@ -18,6 +18,8 @@ import { useQueryRoots } from "./features/search/useQueryRoots";
 import { useNavigationHistory, type NavSnapshot } from "./features/search/useNavigationHistory";
 import type { SearchEntry, RootReturnTarget } from "./features/search/types";
 import { useUserTagsAndNotes } from "./features/tags/useUserTagsAndNotes";
+import { SEARCH_DEBOUNCE_MS } from "./lib/constants";
+import { useDebouncedValue } from "./lib/useDebouncedValue";
 
 function App() {
   const { theme, toggle: toggleTheme } = useTheme();
@@ -27,6 +29,7 @@ function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedWord, setSelectedWord] = useState<{ verseId: string; idx: number } | null>(null);
   const [query, setQuery] = useState("");
+  const debouncedQuery = useDebouncedValue(query, SEARCH_DEBOUNCE_MS);
   const [activeTags, setActiveTags] = useState<string[]>([]);
   const [activeRoot, setActiveRoot] = useState<string | null>(null);
 
@@ -116,7 +119,7 @@ function App() {
   }, [selectedSurahId, history]);
 
   const { globalResults, filtered } = useGlobalSearch({
-    query,
+    query: debouncedQuery,
     activeRoot,
     searchIndex,
     surahVerses: verses,
@@ -124,7 +127,7 @@ function App() {
     userTags,
   });
 
-  const queryRoots = useQueryRoots(query, searchIndex);
+  const queryRoots = useQueryRoots(debouncedQuery, searchIndex);
 
   const selectedVerse = useMemo(
     () => verses.find(v => v.id === selectedId) ?? null,
@@ -151,14 +154,14 @@ function App() {
     // Clicking a result (or a word inside one) while we're in search-or-root
     // mode is a navigation step: push the current view so the back button can
     // return to the result list, then enter browse mode of the target verse.
-    if (activeRoot || query.trim()) {
+    if (activeRoot || debouncedQuery.trim()) {
       history.push(currentSnapshot());
       setActiveRoot(null);
     }
     navigateToTarget({ surahId: entry.surah, verseId: entry.id, wordIdx });
-  }, [activeRoot, query, history, currentSnapshot, navigateToTarget]);
+  }, [activeRoot, debouncedQuery, history, currentSnapshot, navigateToTarget]);
 
-  const breadcrumbMode: "browse" | "search" | "root" | null = query.trim() && globalResults
+  const breadcrumbMode: "browse" | "search" | "root" | null = debouncedQuery.trim() && globalResults
     ? "search"
     : activeRoot && globalResults
       ? "root"
@@ -424,7 +427,7 @@ function App() {
       <Breadcrumb
         visible={scrolled}
         mode={breadcrumbMode}
-        query={query.trim()}
+        query={debouncedQuery.trim()}
         activeRoot={activeRoot}
         surahName={surahData?.name ?? null}
         resultCount={globalResults ? globalResults.length : filtered.length}

@@ -13,3 +13,6 @@ export const DATA_URLS = {
 export const SCROLL_TRIGGER_PX = 220;
 
 export const QUERY_ROOTS_LIMIT = 12;
+
+/** Debounce delay between keystrokes before the search runs. */
+export const SEARCH_DEBOUNCE_MS = 500;
